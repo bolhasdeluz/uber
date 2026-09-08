@@ -10,7 +10,7 @@
   <!-- React & ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- Babel para compilar JSX no navegador -->
+  <!-- Babel para JSX no navegador -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- Lucide Icons & Canvas Confetti -->
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -41,7 +41,14 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    // Componente auxiliar para ícones Lucide
+    // Utilitário para pegar a data de hoje no fuso horário local (YYYY-MM-DD)
+    const getTodayLocalDate = () => {
+      const d = new Date();
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().split("T")[0];
+    };
+
+    // Componente para ícones Lucide
     const Icon = ({ name, size = 20, className = "" }) => {
       useEffect(() => {
         if (window.lucide) window.lucide.createIcons();
@@ -56,7 +63,7 @@
     ];
 
     function App() {
-      // Estados com LocalStorage
+      // Estados persistidos no LocalStorage
       const [wallet, setWallet] = useState(() => {
         const saved = localStorage.getItem("rota_wallet");
         return saved ? JSON.parse(saved) : 0;
@@ -84,9 +91,9 @@
       const [selectedDebt, setSelectedDebt] = useState(null);
       const [payAmount, setPayAmount] = useState("");
 
-      // Formulário de turno
+      // Formulário de registro de turno com data local pré-preenchida
       const [shiftForm, setShiftForm] = useState({
-        date: new Date().toISOString().split("T")[0],
+        date: getTodayLocalDate(),
         income: "",
         hours: "",
         km: "",
@@ -96,7 +103,7 @@
       // Formulário de nova meta
       const [newDebtForm, setNewDebtForm] = useState({ name: "", target: "" });
 
-      // Salvar no LocalStorage
+      // Sincronizar dados com LocalStorage
       useEffect(() => {
         localStorage.setItem("rota_wallet", JSON.stringify(wallet));
         localStorage.setItem("rota_shifts", JSON.stringify(shifts));
@@ -105,13 +112,12 @@
         if (window.lucide) window.lucide.createIcons();
       }, [wallet, shifts, debts, weeklyGoal]);
 
-      // Cálculos da Semana Atual (Segunda a Domingo)
+      // Cálculos da semana corrente (Segunda a Domingo)
       const weekStats = useMemo(() => {
         const now = new Date();
-        const currentDay = now.getDay() === 0 ? 7 : now.getDay(); // Seg = 1, Dom = 7
-        const daysLeft = 7 - currentDay + 1; // Incluindo hoje
+        const currentDay = now.getDay() === 0 ? 7 : now.getDay();
+        const daysLeft = 7 - currentDay + 1;
 
-        // Filtra turnos dos últimos 7 dias da semana corrente
         const startOfWeek = new Date(now);
         startOfWeek.setDate(now.getDate() - (currentDay - 1));
         startOfWeek.setHours(0, 0, 0, 0);
@@ -121,11 +127,10 @@
         const remainingGoal = Math.max(0, weeklyGoal - weeklyIncome);
         const dailyNeeded = daysLeft > 0 ? remainingGoal / daysLeft : 0;
 
-        // Projeção baseada na média dos dias trabalhados
         const daysWorked = new Set(currentWeekShifts.map(s => s.date)).size || 1;
         const currentDailyAvg = weeklyIncome / daysWorked;
         const projectedIncome = weeklyIncome + (currentDailyAvg * (daysLeft - 1));
-        const turboIncome = projectedIncome + (daysLeft * 25); // Modo turbo: +R$ 25/dia
+        const turboIncome = projectedIncome + (daysLeft * 25);
 
         return {
           weeklyIncome,
@@ -138,7 +143,7 @@
         };
       }, [shifts, weeklyGoal]);
 
-      // Métricas do Computador de Bordo
+      // Computador de Bordo (Geral)
       const totalMetrics = useMemo(() => {
         const income = shifts.reduce((acc, s) => acc + s.income, 0);
         const km = shifts.reduce((acc, s) => acc + s.km, 0);
@@ -156,7 +161,7 @@
         };
       }, [shifts]);
 
-      // Totais das Dívidas
+      // Métricas de Dívidas
       const debtTotals = useMemo(() => {
         const totalTarget = debts.reduce((acc, d) => acc + d.target, 0);
         const totalPaid = debts.reduce((acc, d) => acc + d.current, 0);
@@ -165,7 +170,7 @@
         return { totalTarget, totalPaid, allCompleted, percent };
       }, [debts]);
 
-      // Submeter diária de entregas
+      // Submeter turno
       const handleAddShift = (e) => {
         e.preventDefault();
         const income = parseFloat(shiftForm.income) || 0;
@@ -187,8 +192,10 @@
         setShifts([newShift, ...shifts]);
         setWallet(prev => prev + income);
         setIsShiftModalOpen(false);
+
+        // Reseta mantendo o dia de hoje atualizado
         setShiftForm({
-          date: new Date().toISOString().split("T")[0],
+          date: getTodayLocalDate(),
           income: "",
           hours: "",
           km: "",
@@ -196,7 +203,7 @@
         });
       };
 
-      // Abater meta com saldo da carteira
+      // Abater meta
       const handlePayDebt = (e) => {
         e.preventDefault();
         const amt = parseFloat(payAmount) || 0;
@@ -224,7 +231,7 @@
         setSelectedDebt(null);
       };
 
-      // Adicionar nova meta
+      // Cadastrar meta
       const handleAddDebt = (e) => {
         e.preventDefault();
         const target = parseFloat(newDebtForm.target) || 0;
@@ -238,7 +245,7 @@
       return (
         <div className="max-w-md mx-auto p-4 space-y-5">
           
-          {/* TOPO: Cabeçalho & Carteira */}
+          {/* TOPO: Carteira e Ação Rápida */}
           <header className="flex justify-between items-center bg-gray-900/80 backdrop-blur border border-gray-800 p-4 rounded-2xl">
             <div>
               <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Saldo em Pontos (R$)</span>
@@ -247,7 +254,10 @@
               </div>
             </div>
             <button
-              onClick={() => setIsShiftModalOpen(true)}
+              onClick={() => {
+                setShiftForm(prev => ({ ...prev, date: getTodayLocalDate() }));
+                setIsShiftModalOpen(true);
+              }}
               className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 transition"
             >
               <Icon name="plus-circle" size={18} />
@@ -284,7 +294,6 @@
               </div>
             </div>
 
-            {/* Card de Projeção / Modo Turbo */}
             <div className="mt-3 bg-gray-800/60 p-3 rounded-xl text-xs space-y-1 text-gray-300">
               <div className="flex justify-between">
                 <span>Mantendo o ritmo atual:</span>
@@ -313,7 +322,7 @@
             </div>
           </section>
 
-          {/* TRILHA DO ASFALTO (METAS / DÍVIDAS) */}
+          {/* TRILHA DO ASFALTO */}
           <section className="bg-gray-900/60 border border-gray-800 p-4 rounded-2xl">
             <div className="flex justify-between items-center mb-6">
               <div>
@@ -332,9 +341,7 @@
               </button>
             </div>
 
-            {/* Trilha Visual com Checkpoints */}
             <div className="relative pl-6 space-y-8 my-4">
-              {/* Linha de asfalto central da trilha */}
               <div className="absolute left-[31px] top-4 bottom-4 w-1 asphalt-line -translate-x-1/2"></div>
 
               {debts.map((debt, index) => {
@@ -343,7 +350,6 @@
 
                 return (
                   <div key={debt.id} className="relative flex items-center gap-4">
-                    {/* Marcador do Checkpoint / Moto */}
                     <div
                       className={`z-10 w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs border-2 shadow-lg transition-all ${
                         isPaid
@@ -362,7 +368,6 @@
                       )}
                     </div>
 
-                    {/* Card da Meta */}
                     <div className="flex-1 bg-gray-900 border border-gray-800 p-3.5 rounded-xl">
                       <div className="flex justify-between items-start mb-1">
                         <span className="font-bold text-sm text-gray-200">{debt.name}</span>
@@ -371,7 +376,6 @@
                         </span>
                       </div>
 
-                      {/* Mini barra de progresso do checkpoint */}
                       <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden my-2">
                         <div
                           className={`h-full ${isPaid ? "bg-emerald-400" : "bg-amber-400"}`}
@@ -401,7 +405,7 @@
               })}
             </div>
 
-            {/* FASE 2: Preview do Carro Próprio */}
+            {/* FASE 2: Carro Próprio */}
             <div className={`mt-8 p-4 rounded-xl border-2 border-dashed text-center transition ${
               debtTotals.allCompleted
                 ? "bg-emerald-950/40 border-emerald-500 text-emerald-300"
@@ -419,7 +423,7 @@
             </div>
           </section>
 
-          {/* MODAL: Registrar Diária */}
+          {/* MODAL: Registrar Turno (com Data Retroativa) */}
           {isShiftModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-gray-900 border border-gray-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
@@ -431,7 +435,19 @@
                     <Icon name="x" size={20} />
                   </button>
                 </div>
+
                 <form onSubmit={handleAddShift} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-gray-400 block mb-1">Data do Turno</label>
+                    <input
+                      type="date"
+                      required
+                      value={shiftForm.date}
+                      onChange={e => setShiftForm({ ...shiftForm, date: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
+                    />
+                  </div>
+
                   <div>
                     <label className="text-[11px] text-gray-400 block mb-1">Faturamento Líquido (R$)*</label>
                     <input
@@ -444,6 +460,7 @@
                       className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
                   </div>
+
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="text-[11px] text-gray-400 block mb-1">Horas na Pista</label>
@@ -468,6 +485,7 @@
                       />
                     </div>
                   </div>
+
                   <div>
                     <label className="text-[11px] text-gray-400 block mb-1">Qtd. de Corridas</label>
                     <input
@@ -478,6 +496,7 @@
                       className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
                   </div>
+
                   <button
                     type="submit"
                     className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl mt-2 active:scale-95 transition"
@@ -500,7 +519,7 @@
                   </button>
                 </div>
                 <p className="text-xs text-gray-400 mb-3">
-                  Quanto do seu saldo disponível (<strong>R$ {wallet.toFixed(2)}</strong>) você quer aplicar em <strong>{selectedDebt.name}</strong>?
+                  Saldo disponível: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto aplicar em <strong>{selectedDebt.name}</strong>?
                 </p>
                 <form onSubmit={handlePayDebt} className="space-y-3">
                   <input
