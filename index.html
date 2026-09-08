@@ -62,10 +62,42 @@
       return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
     };
 
-    const initialDebts = [
-      { id: 1, name: "Fatura do Cartão", target: 450, current: 0 },
-      { id: 2, name: "Revisão & Pneu da Moto", target: 350, current: 0 },
-      { id: 3, name: "Empréstimo Pessoal", target: 900, current: 0 },
+    // Metas extraídas diretamente do seu caderno (somadas e deletáveis)
+    const initialDebtsList = [
+      // Bloco 1: Terreiro & Pessoas & Cartões / Apps
+      { id: 101, name: "Luz (Terreiro)", target: 285.00, current: 0 },       // 95 + 95 + 95
+      { id: 102, name: "Água (Terreiro)", target: 120.00, current: 0 },      // 40 + 40 + 40
+      { id: 103, name: "Claro (Terreiro)", target: 240.00, current: 0 },     // 120 + 120
+      { id: 104, name: "Alarme (Terreiro)", target: 400.00, current: 0 },    // 200 + 200
+      { id: 105, name: "Aluguel (Terreiro)", target: 1000.00, current: 0 },
+      { id: 106, name: "Fernanda", target: 1200.00, current: 0 },            // 200*4 + 400
+      { id: 107, name: "Tassiana", target: 760.00, current: 0 },             // 190 * 4
+      { id: 108, name: "Everson", target: 1200.00, current: 0 },             // 300 * 4
+      { id: 109, name: "Facio", target: 497.84, current: 0 },
+      { id: 110, name: "Bitpay / Bepay", target: 232.98, current: 0 },
+      { id: 111, name: "iFood", target: 380.49, current: 0 },
+      { id: 112, name: "Infinity", target: 353.73, current: 0 },
+      { id: 113, name: "Inter", target: 300.49, current: 0 },
+
+      // Bloco 2: Casa & Pessoais
+      { id: 201, name: "Luz (Casa)", target: 380.00, current: 0 },
+      { id: 202, name: "Gás (Casa)", target: 200.00, current: 0 },
+      { id: 203, name: "Claro (Casa)", target: 155.00, current: 0 },
+      { id: 204, name: "Vivo", target: 190.00, current: 0 },
+      { id: 205, name: "Psico", target: 450.00, current: 0 },                // 150 + 150 + 150
+      { id: 206, name: "Psiq", target: 150.00, current: 0 },
+      { id: 207, name: "Ração", target: 330.00, current: 0 },                // 250 + 80
+      { id: 208, name: "Petlove", target: 460.00, current: 0 },              // 230 + 230
+      { id: 209, name: "Unha", target: 160.00, current: 0 },
+      { id: 210, name: "Murilo / Muilo", target: 120.00, current: 0 },       // 60 + 60
+      { id: 211, name: "Cloud", target: 67.00, current: 0 },
+      { id: 212, name: "Claude", target: 110.00, current: 0 },
+      { id: 213, name: "BB", target: 57.00, current: 0 },
+      { id: 214, name: "Delicato", target: 400.00, current: 0 },
+      { id: 215, name: "Gympass", target: 350.00, current: 0 },
+      { id: 216, name: "Gabriella / Gabrilla", target: 426.00, current: 0 },
+      { id: 217, name: "Stephanie", target: 500.00, current: 0 },            // 250 + 250
+      { id: 218, name: "Ferragem", target: 353.00, current: 0 },
     ];
 
     function App() {
@@ -85,8 +117,8 @@
       });
 
       const [debts, setDebts] = useState(() => {
-        const saved = localStorage.getItem("rota_debts");
-        return saved ? JSON.parse(saved) : initialDebts;
+        const saved = localStorage.getItem("rota_debts_v2");
+        return saved ? JSON.parse(saved) : initialDebtsList;
       });
 
       const [weeklyGoal, setWeeklyGoal] = useState(() => {
@@ -94,7 +126,6 @@
         return saved ? parseFloat(saved) : 800;
       });
 
-      // Navegação da semana e seleção de dia
       const [weekOffset, setWeekOffset] = useState(0);
       const [selectedDayIndex, setSelectedDayIndex] = useState(null);
 
@@ -106,7 +137,6 @@
       const [selectedDebt, setSelectedDebt] = useState(null);
       const [payAmount, setPayAmount] = useState("");
 
-      // Estado do formulário de turno (criação e edição)
       const [editingShiftId, setEditingShiftId] = useState(null);
       const [shiftForm, setShiftForm] = useState({
         date: getTodayLocalDate(),
@@ -128,12 +158,12 @@
         localStorage.setItem("rota_wallet", JSON.stringify(wallet));
         localStorage.setItem("rota_shifts", JSON.stringify(shifts));
         localStorage.setItem("rota_expenses", JSON.stringify(expenses));
-        localStorage.setItem("rota_debts", JSON.stringify(debts));
+        localStorage.setItem("rota_debts_v2", JSON.stringify(debts));
         localStorage.setItem("rota_goal", weeklyGoal.toString());
         if (window.lucide) window.lucide.createIcons();
       }, [wallet, shifts, expenses, debts, weeklyGoal]);
 
-      // Montagem da Semana Selecionada
+      // Montagem do painel semanal Uber
       const weekData = useMemo(() => {
         const now = new Date();
         const currentDay = now.getDay() === 0 ? 7 : now.getDay();
@@ -227,7 +257,6 @@
         };
       }, [selectedDayIndex, weekData]);
 
-      // Salvar Turno
       const handleSaveShift = (e) => {
         e.preventDefault();
         const income = parseFloat(shiftForm.income) || 0;
@@ -317,7 +346,6 @@
         });
       };
 
-      // Abater meta livremente selecionada
       const handlePayDebt = (e) => {
         e.preventDefault();
         const amt = parseFloat(payAmount) || 0;
@@ -346,7 +374,7 @@
       };
 
       const handleDeleteDebt = (id) => {
-        if (!confirm("Deseja remover essa meta da trilha?")) return;
+        if (!confirm("Deseja realmente apagar esta meta da lista?")) return;
         setDebts(prev => prev.filter(d => d.id !== id));
       };
 
@@ -363,7 +391,7 @@
       return (
         <div className="max-w-md mx-auto min-h-screen bg-black text-white p-4 space-y-6">
           
-          {/* TOPO: Carteira & Ações Rápidas */}
+          {/* TOPO: Carteira & Ações */}
           <header className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
             <div className="flex justify-between items-center mb-3">
               <div>
@@ -411,9 +439,8 @@
             </div>
           </header>
 
-          {/* PAINEL SEMANAL ESTILO UBER */}
+          {/* PAINEL SEMANAL UBER */}
           <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 relative">
-            
             <div className="flex items-center justify-between text-zinc-300 mb-6">
               <button
                 onClick={() => {
@@ -543,10 +570,9 @@
                 </div>
               </div>
             </div>
-
           </section>
 
-          {/* TRILHA DO ASFALTO (ESCOLHA LIVRE DE METAS) */}
+          {/* TRILHA DO ASFALTO COM AS SUAS METAS REAIS */}
           <section className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
             <div className="flex justify-between items-center mb-6">
               <div>
@@ -554,7 +580,7 @@
                   <Icon name="map-pin" size={18} className="text-amber-400" /> A Trilha da Liberdade
                 </h2>
                 <p className="text-xs text-zinc-400">
-                  {debtTotals.percent}% quitado • Escolha qualquer meta para abater
+                  {debtTotals.percent}% pago (R$ {debtTotals.totalPaid.toFixed(2)} de R$ {debtTotals.totalTarget.toFixed(2)})
                 </p>
               </div>
               <button
@@ -565,7 +591,7 @@
               </button>
             </div>
 
-            <div className="relative pl-6 space-y-7 my-4">
+            <div className="relative pl-6 space-y-5 my-4">
               <div className="absolute left-[31px] top-4 bottom-4 w-1 asphalt-line -translate-x-1/2"></div>
 
               {debts.map((debt, index) => {
@@ -574,15 +600,13 @@
 
                 return (
                   <div key={debt.id} className="relative flex items-center gap-4">
-                    
-                    {/* Marcador: Verde para quitado, Amarelo com moto para em andamento, Cinza para aberta */}
                     <div
-                      className={`z-10 w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs border-2 shadow-lg transition-all ${
+                      className={`z-10 w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs border-2 shadow-lg transition-all flex-shrink-0 ${
                         isPaid
                           ? "bg-emerald-500 border-emerald-400 text-black shadow-emerald-500/20"
                           : inProgress
                           ? "bg-amber-400 border-yellow-300 text-black"
-                          : "bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-amber-400"
+                          : "bg-zinc-900 border-zinc-700 text-zinc-300"
                       }`}
                     >
                       {isPaid ? (
@@ -590,11 +614,10 @@
                       ) : inProgress ? (
                         <Icon name="bike" size={18} />
                       ) : (
-                        <Icon name="circle-dot" size={16} />
+                        <Icon name="circle-dot" size={15} />
                       )}
                     </div>
 
-                    {/* Card da Meta: Todas as não quitadas ficam abertas para pagamento imediato */}
                     <div className="flex-1 bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl hover:border-zinc-700 transition">
                       <div className="flex justify-between items-start mb-1">
                         <div>
@@ -609,10 +632,10 @@
                           </span>
                           <button
                             onClick={() => handleDeleteDebt(debt.id)}
-                            className="text-zinc-600 hover:text-rose-400 p-0.5"
+                            className="text-zinc-600 hover:text-rose-400 p-1"
                             title="Remover meta"
                           >
-                            <Icon name="trash-2" size={13} />
+                            <Icon name="trash-2" size={14} />
                           </button>
                         </div>
                       </div>
@@ -624,7 +647,6 @@
                         ></div>
                       </div>
 
-                      {/* Botão de abater disponível em qualquer meta não quitada */}
                       {!isPaid ? (
                         <button
                           onClick={() => {
@@ -643,7 +665,7 @@
                         </button>
                       ) : (
                         <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 mt-1 justify-center">
-                          <Icon name="check-circle" size={12} /> Meta Paga!
+                          <Icon name="check-circle" size={12} /> Meta Quitada!
                         </div>
                       )}
                     </div>
@@ -670,7 +692,7 @@
             </div>
           </section>
 
-          {/* MODAL: Registrar / Editar Turno */}
+          {/* MODAL: Diária */}
           {isShiftModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
@@ -766,7 +788,7 @@
             </div>
           )}
 
-          {/* MODAL: Registrar Gasto Extra */}
+          {/* MODAL: Gasto Extra */}
           {isExpenseModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
@@ -823,7 +845,7 @@
             </div>
           )}
 
-          {/* MODAL: Abater Meta Livre */}
+          {/* MODAL: Abater Meta */}
           {isPayModalOpen && selectedDebt && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
@@ -834,7 +856,7 @@
                   </button>
                 </div>
                 <p className="text-xs text-zinc-400 mb-3">
-                  Saldo: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto quer abater em <strong>{selectedDebt.name}</strong>?
+                  Saldo: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto abater em <strong>{selectedDebt.name}</strong>?
                 </p>
                 <form onSubmit={handlePayDebt} className="space-y-3">
                   <input
