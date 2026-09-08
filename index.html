@@ -10,18 +10,18 @@
   <!-- React & ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- Babel para JSX no navegador -->
+  <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- Lucide Icons & Canvas Confetti -->
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
     body {
       font-family: 'Plus Jakarta Sans', sans-serif;
-      background-color: #0d1117;
-      color: #e6edf3;
+      background-color: #000000;
+      color: #ffffff;
       -webkit-tap-highlight-color: transparent;
     }
     .asphalt-line {
@@ -35,20 +35,26 @@
     }
   </style>
 </head>
-<body class="antialiased pb-24">
+<body class="antialiased pb-28">
   <div id="root"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    // Utilitário para pegar a data de hoje no fuso horário local (YYYY-MM-DD)
     const getTodayLocalDate = () => {
       const d = new Date();
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
       return d.toISOString().split("T")[0];
     };
 
-    // Componente para ícones Lucide
+    const formatHoursMinutes = (decimalHours) => {
+      if (!decimalHours || decimalHours <= 0) return "0 h 0 m";
+      const totalMinutes = Math.round(decimalHours * 60);
+      const h = Math.floor(totalMinutes / 60);
+      const m = totalMinutes % 60;
+      return `${h} h ${m} m`;
+    };
+
     const Icon = ({ name, size = 20, className = "" }) => {
       useEffect(() => {
         if (window.lucide) window.lucide.createIcons();
@@ -63,7 +69,6 @@
     ];
 
     function App() {
-      // Estados persistidos no LocalStorage
       const [wallet, setWallet] = useState(() => {
         const saved = localStorage.getItem("rota_wallet");
         return saved ? JSON.parse(saved) : 0;
@@ -71,6 +76,11 @@
 
       const [shifts, setShifts] = useState(() => {
         const saved = localStorage.getItem("rota_shifts");
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [expenses, setExpenses] = useState(() => {
+        const saved = localStorage.getItem("rota_expenses");
         return saved ? JSON.parse(saved) : [];
       });
 
@@ -84,14 +94,19 @@
         return saved ? parseFloat(saved) : 800;
       });
 
+      // Navegação da semana (0 = atual, -1 = anterior, etc.) e dia selecionado no gráfico
+      const [weekOffset, setWeekOffset] = useState(0);
+      const [selectedDayIndex, setSelectedDayIndex] = useState(null);
+
       // Modais
       const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+      const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
       const [isPayModalOpen, setIsPayModalOpen] = useState(false);
       const [isNewDebtModalOpen, setIsNewDebtModalOpen] = useState(false);
       const [selectedDebt, setSelectedDebt] = useState(null);
       const [payAmount, setPayAmount] = useState("");
 
-      // Formulário de registro de turno com data local pré-preenchida
+      // Formulários
       const [shiftForm, setShiftForm] = useState({
         date: getTodayLocalDate(),
         income: "",
@@ -100,68 +115,86 @@
         trips: "",
       });
 
-      // Formulário de nova meta
+      const [expenseForm, setExpenseForm] = useState({
+        amount: "",
+        description: "",
+        date: getTodayLocalDate(),
+      });
+
       const [newDebtForm, setNewDebtForm] = useState({ name: "", target: "" });
 
-      // Sincronizar dados com LocalStorage
       useEffect(() => {
         localStorage.setItem("rota_wallet", JSON.stringify(wallet));
         localStorage.setItem("rota_shifts", JSON.stringify(shifts));
+        localStorage.setItem("rota_expenses", JSON.stringify(expenses));
         localStorage.setItem("rota_debts", JSON.stringify(debts));
         localStorage.setItem("rota_goal", weeklyGoal.toString());
         if (window.lucide) window.lucide.createIcons();
-      }, [wallet, shifts, debts, weeklyGoal]);
+      }, [wallet, shifts, expenses, debts, weeklyGoal]);
 
-      // Cálculos da semana corrente (Segunda a Domingo)
-      const weekStats = useMemo(() => {
+      // Montagem da Semana Selecionada (Segunda a Domingo)
+      const weekData = useMemo(() => {
         const now = new Date();
         const currentDay = now.getDay() === 0 ? 7 : now.getDay();
-        const daysLeft = 7 - currentDay + 1;
 
-        const startOfWeek = new Date(now);
-        startOfWeek.setDate(now.getDate() - (currentDay - 1));
-        startOfWeek.setHours(0, 0, 0, 0);
+        // Segunda-feira base com offset de semanas
+        const monday = new Date(now);
+        monday.setDate(now.getDate() - (currentDay - 1) + weekOffset * 7);
+        monday.setHours(0, 0, 0, 0);
 
-        const currentWeekShifts = shifts.filter(s => new Date(s.date + "T00:00:00") >= startOfWeek);
-        const weeklyIncome = currentWeekShifts.reduce((acc, s) => acc + s.income, 0);
-        const remainingGoal = Math.max(0, weeklyGoal - weeklyIncome);
-        const dailyNeeded = daysLeft > 0 ? remainingGoal / daysLeft : 0;
+        const days = [];
+        const dayNames = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
+        const monthNames = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."];
 
-        const daysWorked = new Set(currentWeekShifts.map(s => s.date)).size || 1;
-        const currentDailyAvg = weeklyIncome / daysWorked;
-        const projectedIncome = weeklyIncome + (currentDailyAvg * (daysLeft - 1));
-        const turboIncome = projectedIncome + (daysLeft * 25);
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(monday);
+          d.setDate(monday.getDate() + i);
+          
+          const localISO = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split("T")[0];
+          const dayShifts = shifts.filter(s => s.date === localISO);
+
+          const income = dayShifts.reduce((acc, s) => acc + s.income, 0);
+          const hours = dayShifts.reduce((acc, s) => acc + s.hours, 0);
+          const km = dayShifts.reduce((acc, s) => acc + s.km, 0);
+          const trips = dayShifts.reduce((acc, s) => acc + s.trips, 0);
+
+          days.push({
+            dateStr: localISO,
+            dayNum: d.getDate(),
+            monthName: monthNames[d.getMonth()],
+            dayName: dayNames[i],
+            income,
+            hours,
+            km,
+            trips,
+            hasWork: dayShifts.length > 0
+          });
+        }
+
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+
+        const dateRangeLabel = `${monday.getDate()} de ${monthNames[monday.getMonth()]} – ${sunday.getDate()} de ${monthNames[sunday.getMonth()]}`;
+
+        const totalIncome = days.reduce((acc, d) => acc + d.income, 0);
+        const totalHours = days.reduce((acc, d) => acc + d.hours, 0);
+        const totalKm = days.reduce((acc, d) => acc + d.km, 0);
+        const totalTrips = days.reduce((acc, d) => acc + d.trips, 0);
+
+        const maxDailyIncome = Math.max(...days.map(d => d.income), 0);
 
         return {
-          weeklyIncome,
-          remainingGoal,
-          daysLeft,
-          dailyNeeded,
-          projectedIncome: Math.round(projectedIncome),
-          turboIncome: Math.round(turboIncome),
-          progressPercent: Math.min(100, Math.round((weeklyIncome / weeklyGoal) * 100))
+          days,
+          dateRangeLabel,
+          totalIncome,
+          totalHours,
+          totalKm,
+          totalTrips,
+          maxDailyIncome,
         };
-      }, [shifts, weeklyGoal]);
+      }, [shifts, weekOffset]);
 
-      // Computador de Bordo (Geral)
-      const totalMetrics = useMemo(() => {
-        const income = shifts.reduce((acc, s) => acc + s.income, 0);
-        const km = shifts.reduce((acc, s) => acc + s.km, 0);
-        const hours = shifts.reduce((acc, s) => acc + s.hours, 0);
-        const trips = shifts.reduce((acc, s) => acc + s.trips, 0);
-
-        return {
-          income,
-          km,
-          hours,
-          trips,
-          perHour: hours > 0 ? (income / hours).toFixed(2) : "0.00",
-          perKm: km > 0 ? (income / km).toFixed(2) : "0.00",
-          perTrip: trips > 0 ? (income / trips).toFixed(2) : "0.00",
-        };
-      }, [shifts]);
-
-      // Métricas de Dívidas
+      // Totais de Metas / Dívidas
       const debtTotals = useMemo(() => {
         const totalTarget = debts.reduce((acc, d) => acc + d.target, 0);
         const totalPaid = debts.reduce((acc, d) => acc + d.current, 0);
@@ -170,7 +203,30 @@
         return { totalTarget, totalPaid, allCompleted, percent };
       }, [debts]);
 
-      // Submeter turno
+      // Estatística em exibição: ou o dia clicado ou o total da semana
+      const activeStats = useMemo(() => {
+        if (selectedDayIndex !== null && weekData.days[selectedDayIndex]) {
+          const d = weekData.days[selectedDayIndex];
+          return {
+            title: `${d.dayNum} de ${d.monthName} (${d.dayName})`,
+            income: d.income,
+            hours: d.hours,
+            trips: d.trips,
+            km: d.km,
+            isSingleDay: true
+          };
+        }
+        return {
+          title: "Total da Semana",
+          income: weekData.totalIncome,
+          hours: weekData.totalHours,
+          trips: weekData.totalTrips,
+          km: weekData.totalKm,
+          isSingleDay: false
+        };
+      }, [selectedDayIndex, weekData]);
+
+      // Ações
       const handleAddShift = (e) => {
         e.preventDefault();
         const income = parseFloat(shiftForm.income) || 0;
@@ -192,8 +248,6 @@
         setShifts([newShift, ...shifts]);
         setWallet(prev => prev + income);
         setIsShiftModalOpen(false);
-
-        // Reseta mantendo o dia de hoje atualizado
         setShiftForm({
           date: getTodayLocalDate(),
           income: "",
@@ -203,7 +257,27 @@
         });
       };
 
-      // Abater meta
+      const handleAddExpense = (e) => {
+        e.preventDefault();
+        const amount = parseFloat(expenseForm.amount) || 0;
+        if (amount <= 0 || amount > wallet) return;
+
+        setExpenses([{
+          id: Date.now(),
+          amount,
+          description: expenseForm.description || "Gasto Pessoal/Extra",
+          date: expenseForm.date,
+        }, ...expenses]);
+
+        setWallet(prev => prev - amount);
+        setIsExpenseModalOpen(false);
+        setExpenseForm({
+          amount: "",
+          description: "",
+          date: getTodayLocalDate(),
+        });
+      };
+
       const handlePayDebt = (e) => {
         e.preventDefault();
         const amt = parseFloat(payAmount) || 0;
@@ -231,7 +305,6 @@
         setSelectedDebt(null);
       };
 
-      // Cadastrar meta
       const handleAddDebt = (e) => {
         e.preventDefault();
         const target = parseFloat(newDebtForm.target) || 0;
@@ -243,99 +316,194 @@
       };
 
       return (
-        <div className="max-w-md mx-auto p-4 space-y-5">
+        <div className="max-w-md mx-auto min-h-screen bg-black text-white p-4 space-y-6">
           
-          {/* TOPO: Carteira e Ação Rápida */}
-          <header className="flex justify-between items-center bg-gray-900/80 backdrop-blur border border-gray-800 p-4 rounded-2xl">
-            <div>
-              <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Saldo em Pontos (R$)</span>
-              <div className="text-2xl font-extrabold text-amber-400">
-                R$ {wallet.toFixed(2)}
+          {/* TOPO: Carteira & Ações Rápidas */}
+          <header className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
+            <div className="flex justify-between items-center mb-3">
+              <div>
+                <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">Saldo na Carteira</span>
+                <div className="text-2xl font-extrabold text-amber-400">
+                  R$ {wallet.toFixed(2)}
+                </div>
               </div>
             </div>
-            <button
-              onClick={() => {
-                setShiftForm(prev => ({ ...prev, date: getTodayLocalDate() }));
-                setIsShiftModalOpen(true);
-              }}
-              className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 transition"
-            >
-              <Icon name="plus-circle" size={18} />
-              <span>Diária</span>
-            </button>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  setShiftForm(prev => ({ ...prev, date: getTodayLocalDate() }));
+                  setIsShiftModalOpen(true);
+                }}
+                className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs active:scale-95 transition"
+              >
+                <Icon name="plus-circle" size={16} />
+                <span>+ Diária</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setExpenseForm(prev => ({ ...prev, date: getTodayLocalDate() }));
+                  setIsExpenseModalOpen(true);
+                }}
+                disabled={wallet <= 0}
+                className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition ${
+                  wallet > 0
+                    ? "bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 active:scale-95"
+                    : "bg-zinc-900 text-zinc-600 cursor-not-allowed border border-zinc-900"
+                }`}
+              >
+                <Icon name="arrow-up-right" size={16} />
+                <span>- Gasto Extra</span>
+              </button>
+            </div>
           </header>
 
-          {/* ACELERÔMETRO SEMANAL */}
-          <section className="bg-gray-900/90 border border-gray-800 p-4 rounded-2xl relative overflow-hidden">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-xs font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1.5">
-                <Icon name="target" size={15} /> Meta Semanal (R$ {weeklyGoal})
-              </span>
-              <span className="text-xs text-gray-400">{weekStats.daysLeft} dias restantes</span>
+          {/* ======================================================== */}
+          {/* PAINEL SEMANAL ESTILO UBER COM HISTÓRICO RETROATIVO     */}
+          {/* ======================================================== */}
+          <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 relative">
+            
+            {/* Navegador de Semanas */}
+            <div className="flex items-center justify-between text-zinc-300 mb-6">
+              <button
+                onClick={() => {
+                  setWeekOffset(prev => prev - 1);
+                  setSelectedDayIndex(null);
+                }}
+                className="p-1 text-zinc-400 hover:text-white active:scale-90 transition"
+              >
+                <Icon name="chevron-left" size={22} />
+              </button>
+
+              <div className="text-sm font-semibold tracking-wide flex items-center gap-1 text-zinc-200">
+                {weekData.dateRangeLabel}
+                {weekOffset === 0 && <span className="text-[10px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded font-normal ml-1">Atual</span>}
+              </div>
+
+              <button
+                onClick={() => {
+                  setWeekOffset(prev => prev + 1);
+                  setSelectedDayIndex(null);
+                }}
+                className="p-1 text-zinc-400 hover:text-white active:scale-90 transition"
+              >
+                <Icon name="chevron-right" size={22} />
+              </button>
             </div>
 
-            <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden mb-3">
-              <div
-                className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-500"
-                style={{ width: `${weekStats.progressPercent}%` }}
-              ></div>
+            {/* Valor em Destaque */}
+            <div className="text-center mb-6">
+              {selectedDayIndex !== null && (
+                <button
+                  onClick={() => setSelectedDayIndex(null)}
+                  className="text-[11px] text-sky-400 mb-1 inline-flex items-center gap-1 hover:underline"
+                >
+                  <Icon name="rotate-ccw" size={12} /> Ver total da semana
+                </button>
+              )}
+              <div className="text-3xl font-extrabold tracking-tight">
+                R$ {activeStats.income.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-xs text-zinc-400 mt-0.5">{activeStats.title}</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-center pt-1 border-t border-gray-800/60">
-              <div>
-                <p className="text-[11px] text-gray-400">Feito na semana</p>
-                <p className="text-sm font-bold text-emerald-400">R$ {weekStats.weeklyIncome.toFixed(2)}</p>
-              </div>
-              <div>
-                <p className="text-[11px] text-gray-400">Ritmo Necessário</p>
-                <p className="text-sm font-bold text-amber-400">
-                  {weekStats.remainingGoal > 0 ? `R$ ${weekStats.dailyNeeded.toFixed(2)}/dia` : "Meta Batida! 🎉"}
-                </p>
+            {/* Linha pontilhada da melhor diária */}
+            <div className="text-right text-[11px] text-zinc-400 mb-1 pr-1 font-medium">
+              {weekData.maxDailyIncome > 0 && `R$ ${weekData.maxDailyIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+            </div>
+
+            {/* Gráfico de Barras Estilo Uber */}
+            <div className="relative pt-4 pb-2 border-b border-dashed border-zinc-700">
+              <div className="h-36 flex items-end justify-between gap-1.5 px-1">
+                {weekData.days.map((day, idx) => {
+                  const isSelected = selectedDayIndex === idx;
+                  const isZero = day.income === 0;
+                  const heightPercent = weekData.maxDailyIncome > 0 ? (day.income / weekData.maxDailyIncome) * 100 : 0;
+
+                  return (
+                    <div
+                      key={day.dateStr}
+                      onClick={() => setSelectedDayIndex(isSelected ? null : idx)}
+                      className="flex-1 h-full flex flex-col justify-end items-center cursor-pointer group"
+                    >
+                      <div
+                        style={{ height: isZero ? "4px" : `${Math.max(8, heightPercent)}%` }}
+                        className={`w-full rounded-t-sm transition-all duration-200 ${
+                          isSelected
+                            ? "bg-sky-400"
+                            : isZero
+                            ? "bg-zinc-800 group-hover:bg-zinc-700"
+                            : "bg-sky-600 group-hover:bg-sky-500"
+                        }`}
+                      ></div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
-            <div className="mt-3 bg-gray-800/60 p-3 rounded-xl text-xs space-y-1 text-gray-300">
-              <div className="flex justify-between">
-                <span>Mantendo o ritmo atual:</span>
-                <span className="font-semibold text-white">~R$ {weekStats.projectedIncome}</span>
-              </div>
-              <div className="flex justify-between text-emerald-400">
-                <span className="flex items-center gap-1"><Icon name="zap" size={14} /> Modo Turbo (+R$ 25/dia):</span>
-                <span className="font-bold">~R$ {weekStats.turboIncome}</span>
+            {/* Dias da semana e números */}
+            <div className="flex justify-between items-center text-center mt-3 px-1 text-xs">
+              {weekData.days.map((day, idx) => {
+                const isSelected = selectedDayIndex === idx;
+                return (
+                  <div
+                    key={day.dateStr}
+                    onClick={() => setSelectedDayIndex(isSelected ? null : idx)}
+                    className={`flex-1 cursor-pointer transition py-1 rounded-lg ${
+                      isSelected ? "text-sky-400 font-bold bg-sky-950/30" : "text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    <div className="text-[13px]">{day.dayNum}</div>
+                    <div className="text-[11px] font-medium">{day.dayName}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Sessão de Estatísticas (Online / Viagens / Km) */}
+            <div className="mt-8 pt-4 border-t border-zinc-900">
+              <h4 className="text-lg font-bold tracking-tight mb-4">Estatísticas</h4>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <span className="text-xs text-zinc-400 block mb-1">Online</span>
+                  <span className="text-base font-extrabold text-white">
+                    {formatHoursMinutes(activeStats.hours)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs text-zinc-400 block mb-1">Viagens</span>
+                  <span className="text-base font-extrabold text-white">
+                    {activeStats.trips}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-xs text-zinc-400 block mb-1">Distância</span>
+                  <span className="text-base font-extrabold text-white">
+                    {activeStats.km} km
+                  </span>
+                </div>
               </div>
             </div>
+
           </section>
 
-          {/* COMPUTADOR DE BORDO */}
-          <section className="grid grid-cols-3 gap-2">
-            <div className="bg-gray-900 border border-gray-800 p-3 rounded-xl text-center">
-              <span className="text-[10px] text-gray-400 block font-semibold">R$ / HORA</span>
-              <span className="text-sm font-extrabold text-white">R$ {totalMetrics.perHour}</span>
-            </div>
-            <div className="bg-gray-900 border border-gray-800 p-3 rounded-xl text-center">
-              <span className="text-[10px] text-gray-400 block font-semibold">R$ / KM</span>
-              <span className="text-sm font-extrabold text-white">R$ {totalMetrics.perKm}</span>
-            </div>
-            <div className="bg-gray-900 border border-gray-800 p-3 rounded-xl text-center">
-              <span className="text-[10px] text-gray-400 block font-semibold">TICKET MÉD.</span>
-              <span className="text-sm font-extrabold text-white">R$ {totalMetrics.perTrip}</span>
-            </div>
-          </section>
-
-          {/* TRILHA DO ASFALTO */}
-          <section className="bg-gray-900/60 border border-gray-800 p-4 rounded-2xl">
+          {/* TRILHA DO ASFALTO (DÍVIDAS) */}
+          <section className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h2 className="font-extrabold text-base text-white flex items-center gap-2">
                   <Icon name="map-pin" size={18} className="text-amber-400" /> A Trilha da Liberdade
                 </h2>
-                <p className="text-xs text-gray-400">
-                  {debtTotals.percent}% das dívidas ativas quitadas
+                <p className="text-xs text-zinc-400">
+                  {debtTotals.percent}% das dívidas quitadas
                 </p>
               </div>
               <button
                 onClick={() => setIsNewDebtModalOpen(true)}
-                className="text-xs text-gray-400 hover:text-white bg-gray-800 px-2.5 py-1.5 rounded-lg flex items-center gap-1 border border-gray-700"
+                className="text-xs text-zinc-400 hover:text-white bg-zinc-900 px-2.5 py-1.5 rounded-lg flex items-center gap-1 border border-zinc-800"
               >
                 <Icon name="plus" size={14} /> Meta
               </button>
@@ -356,7 +524,7 @@
                           ? "bg-emerald-500 border-emerald-400 text-black shadow-emerald-500/20"
                           : inProgress
                           ? "bg-amber-400 border-yellow-300 text-black animate-pulse"
-                          : "bg-gray-800 border-gray-700 text-gray-400"
+                          : "bg-zinc-900 border-zinc-800 text-zinc-500"
                       }`}
                     >
                       {isPaid ? (
@@ -368,15 +536,15 @@
                       )}
                     </div>
 
-                    <div className="flex-1 bg-gray-900 border border-gray-800 p-3.5 rounded-xl">
+                    <div className="flex-1 bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl">
                       <div className="flex justify-between items-start mb-1">
-                        <span className="font-bold text-sm text-gray-200">{debt.name}</span>
-                        <span className={`text-xs font-semibold ${isPaid ? "text-emerald-400" : "text-gray-400"}`}>
+                        <span className="font-bold text-sm text-zinc-200">{debt.name}</span>
+                        <span className={`text-xs font-semibold ${isPaid ? "text-emerald-400" : "text-zinc-400"}`}>
                           R$ {debt.current} / {debt.target}
                         </span>
                       </div>
 
-                      <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden my-2">
+                      <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden my-2">
                         <div
                           className={`h-full ${isPaid ? "bg-emerald-400" : "bg-amber-400"}`}
                           style={{ width: `${Math.min(100, (debt.current / debt.target) * 100)}%` }}
@@ -393,7 +561,7 @@
                           className={`w-full text-xs font-bold py-1.5 rounded-lg mt-1 transition ${
                             wallet > 0
                               ? "bg-amber-400 hover:bg-amber-300 text-black shadow"
-                              : "bg-gray-800 text-gray-500 cursor-not-allowed"
+                              : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
                           }`}
                         >
                           {wallet > 0 ? "Abater com Saldo" : "Sem saldo disponível"}
@@ -409,7 +577,7 @@
             <div className={`mt-8 p-4 rounded-xl border-2 border-dashed text-center transition ${
               debtTotals.allCompleted
                 ? "bg-emerald-950/40 border-emerald-500 text-emerald-300"
-                : "bg-gray-950/40 border-gray-800 text-gray-600"
+                : "bg-zinc-950/40 border-zinc-800 text-zinc-600"
             }`}>
               <div className="flex justify-center mb-1">
                 <Icon name="car" size={26} />
@@ -418,38 +586,38 @@
               <p className="text-xs mt-0.5">
                 {debtTotals.allCompleted
                   ? "🎉 PARABÉNS! Dívidas zeradas! A Trilha da Entrada do Carro está liberada!"
-                  : "🔒 Bloqueado: Quite todas as metas da Fase 1 para destravar a rota da entrada do carro."}
+                  : "🔒 Bloqueado: Quite todas as metas da Fase 1 para destravar a rota do carro."}
               </p>
             </div>
           </section>
 
-          {/* MODAL: Registrar Turno (com Data Retroativa) */}
+          {/* MODAL: Registrar Turno */}
           {isShiftModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-gray-900 border border-gray-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="font-bold text-base text-white flex items-center gap-2">
                     <Icon name="bike" size={18} className="text-amber-400" /> Registrar Turno
                   </h3>
-                  <button onClick={() => setIsShiftModalOpen(false)} className="text-gray-400 hover:text-white">
+                  <button onClick={() => setIsShiftModalOpen(false)} className="text-zinc-400 hover:text-white">
                     <Icon name="x" size={20} />
                   </button>
                 </div>
 
                 <form onSubmit={handleAddShift} className="space-y-3">
                   <div>
-                    <label className="text-[11px] text-gray-400 block mb-1">Data do Turno</label>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Data do Turno</label>
                     <input
                       type="date"
                       required
                       value={shiftForm.date}
                       onChange={e => setShiftForm({ ...shiftForm, date: e.target.value })}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[11px] text-gray-400 block mb-1">Faturamento Líquido (R$)*</label>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Faturamento Líquido (R$)*</label>
                     <input
                       type="number"
                       step="0.01"
@@ -457,43 +625,43 @@
                       placeholder="Ex: 145.50"
                       value={shiftForm.income}
                       onChange={e => setShiftForm({ ...shiftForm, income: e.target.value })}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-[11px] text-gray-400 block mb-1">Horas na Pista</label>
+                      <label className="text-[11px] text-zinc-400 block mb-1">Horas na Pista</label>
                       <input
                         type="number"
                         step="0.1"
                         placeholder="Ex: 6.5"
                         value={shiftForm.hours}
                         onChange={e => setShiftForm({ ...shiftForm, hours: e.target.value })}
-                        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-gray-400 block mb-1">Km Rodados</label>
+                      <label className="text-[11px] text-zinc-400 block mb-1">Km Rodados</label>
                       <input
                         type="number"
                         step="1"
                         placeholder="Ex: 95"
                         value={shiftForm.km}
                         onChange={e => setShiftForm({ ...shiftForm, km: e.target.value })}
-                        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] text-gray-400 block mb-1">Qtd. de Corridas</label>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Qtd. de Viagens</label>
                     <input
                       type="number"
                       placeholder="Ex: 14"
                       value={shiftForm.trips}
                       onChange={e => setShiftForm({ ...shiftForm, trips: e.target.value })}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
                   </div>
 
@@ -508,18 +676,75 @@
             </div>
           )}
 
-          {/* MODAL: Abater Saldo */}
-          {isPayModalOpen && selectedDebt && (
+          {/* MODAL: Registrar Gasto Extra */}
+          {isExpenseModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-gray-900 border border-gray-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="font-bold text-base text-white">Abater Meta</h3>
-                  <button onClick={() => setIsPayModalOpen(false)} className="text-gray-400 hover:text-white">
+                  <h3 className="font-bold text-base text-rose-400 flex items-center gap-2">
+                    <Icon name="arrow-up-right" size={18} /> Gasto Extra / Saque
+                  </h3>
+                  <button onClick={() => setIsExpenseModalOpen(false)} className="text-zinc-400 hover:text-white">
                     <Icon name="x" size={20} />
                   </button>
                 </div>
-                <p className="text-xs text-gray-400 mb-3">
-                  Saldo disponível: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto aplicar em <strong>{selectedDebt.name}</strong>?
+                <form onSubmit={handleAddExpense} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Data</label>
+                    <input
+                      type="date"
+                      required
+                      value={expenseForm.date}
+                      onChange={e => setExpenseForm({ ...expenseForm, date: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-rose-400 [color-scheme:dark]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Valor a Sacar (R$)*</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      max={wallet}
+                      required
+                      placeholder={`Máx: R$ ${wallet.toFixed(2)}`}
+                      value={expenseForm.amount}
+                      onChange={e => setExpenseForm({ ...expenseForm, amount: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-rose-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Descrição</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Almoço, lanche, uso pessoal"
+                      value={expenseForm.description}
+                      onChange={e => setExpenseForm({ ...expenseForm, description: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-rose-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
+                  >
+                    Confirmar Saque
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: Abater Meta */}
+          {isPayModalOpen && selectedDebt && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">Abater Meta</h3>
+                  <button onClick={() => setIsPayModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <p className="text-xs text-zinc-400 mb-3">
+                  Saldo: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto abater em <strong>{selectedDebt.name}</strong>?
                 </p>
                 <form onSubmit={handlePayDebt} className="space-y-3">
                   <input
@@ -529,17 +754,15 @@
                     placeholder={`Máx: R$ ${Math.min(wallet, selectedDebt.target - selectedDebt.current)}`}
                     value={payAmount}
                     onChange={e => setPayAmount(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                   />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPayAmount(Math.min(wallet, selectedDebt.target - selectedDebt.current).toString())}
-                      className="bg-gray-800 hover:bg-gray-700 text-xs px-2.5 py-1.5 rounded-lg border border-gray-700 text-gray-300"
-                    >
-                      Usar Tudo Possível
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPayAmount(Math.min(wallet, selectedDebt.target - selectedDebt.current).toString())}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-xs px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300"
+                  >
+                    Usar Máximo Possível
+                  </button>
                   <button
                     type="submit"
                     className="w-full bg-amber-400 hover:bg-amber-300 text-black font-bold py-2.5 rounded-xl active:scale-95 transition"
@@ -554,27 +777,27 @@
           {/* MODAL: Nova Meta */}
           {isNewDebtModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-gray-900 border border-gray-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
                 <div className="flex justify-between items-center mb-3">
-                  <h3 className="font-bold text-base text-white">Adicionar Checkpoint/Meta</h3>
-                  <button onClick={() => setIsNewDebtModalOpen(false)} className="text-gray-400 hover:text-white">
+                  <h3 className="font-bold text-base text-white">Nova Meta</h3>
+                  <button onClick={() => setIsNewDebtModalOpen(false)} className="text-zinc-400 hover:text-white">
                     <Icon name="x" size={20} />
                   </button>
                 </div>
                 <form onSubmit={handleAddDebt} className="space-y-3">
                   <div>
-                    <label className="text-[11px] text-gray-400 block mb-1">Nome da Conta / Despesa</label>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Nome da Conta</label>
                     <input
                       type="text"
                       required
                       placeholder="Ex: Empréstimo do Banco"
                       value={newDebtForm.name}
                       onChange={e => setNewDebtForm({ ...newDebtForm, name: e.target.value })}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] text-gray-400 block mb-1">Valor Total (R$)</label>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Valor Total (R$)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -582,7 +805,7 @@
                       placeholder="Ex: 600.00"
                       value={newDebtForm.target}
                       onChange={e => setNewDebtForm({ ...newDebtForm, target: e.target.value })}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
                   </div>
                   <button
