@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Rota da Liberdade - Gamificação das Entregas</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel para compilar JSX no navegador -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Lucide Icons & Canvas Confetti -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      background-color: #0d1117;
+      color: #e6edf3;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .asphalt-line {
+      background: repeating-linear-gradient(
+        to bottom,
+        #facc15 0px,
+        #facc15 14px,
+        transparent 14px,
+        transparent 28px
+      );
+    }
+  </style>
+</head>
+<body class="antialiased pb-24">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // Componente auxiliar para ícones Lucide
+    const Icon = ({ name, size = 20, className = "" }) => {
+      useEffect(() => {
+        if (window.lucide) window.lucide.createIcons();
+      }, [name]);
+      return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
+    };
+
+    const initialDebts = [
+      { id: 1, name: "Fatura do Cartão", target: 450, current: 0 },
+      { id: 2, name: "Revisão & Pneu da Moto", target: 350, current: 0 },
+      { id: 3, name: "Empréstimo Pessoal", target: 900, current: 0 },
+    ];
+
+    function App() {
+      // Estados com LocalStorage
+      const [wallet, setWallet] = useState(() => {
+        const saved = localStorage.getItem("rota_wallet");
+        return saved ? JSON.parse(saved) : 0;
+      });
+
+      const [shifts, setShifts] = useState(() => {
+        const saved = localStorage.getItem("rota_shifts");
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [debts, setDebts] = useState(() => {
+        const saved = localStorage.getItem("rota_debts");
+        return saved ? JSON.parse(saved) : initialDebts;
+      });
+
+      const [weeklyGoal, setWeeklyGoal] = useState(() => {
+        const saved = localStorage.getItem("rota_goal");
+        return saved ? parseFloat(saved) : 800;
+      });
+
+      // Modais
+      const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+      const [isPayModalOpen, setIsPayModalOpen] = useState(false);
+      const [isNewDebtModalOpen, setIsNewDebtModalOpen] = useState(false);
+      const [selectedDebt, setSelectedDebt] = useState(null);
+      const [payAmount, setPayAmount] = useState("");
+
+      // Formulário de turno
+      const [shiftForm, setShiftForm] = useState({
+        date: new Date().toISOString().split("T")[0],
+        income: "",
+        hours: "",
+        km: "",
+        trips: "",
+      });
+
+      // Formulário de nova meta
+      const [newDebtForm, setNewDebtForm] = useState({ name: "", target: "" });
+
+      // Salvar no LocalStorage
+      useEffect(() => {
+        localStorage.setItem("rota_wallet", JSON.stringify(wallet));
+        localStorage.setItem("rota_shifts", JSON.stringify(shifts));
+        localStorage.setItem("rota_debts", JSON.stringify(debts));
+        localStorage.setItem("rota_goal", weeklyGoal.toString());
+        if (window.lucide) window.lucide.createIcons();
+      }, [wallet, shifts, debts, weeklyGoal]);
+
+      // Cálculos da Semana Atual (Segunda a Domingo)
+      const weekStats = useMemo(() => {
+        const now = new Date();
+        const currentDay = now.getDay() === 0 ? 7 : now.getDay(); // Seg = 1, Dom = 7
+        const daysLeft = 7 - currentDay + 1; // Incluindo hoje
+
+        // Filtra turnos dos últimos 7 dias da semana corrente
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - (currentDay - 1));
+        startOfWeek.setHours(0, 0, 0, 0);
+
+        const currentWeekShifts = shifts.filter(s => new Date(s.date + "T00:00:00") >= startOfWeek);
+        const weeklyIncome = currentWeekShifts.reduce((acc, s) => acc + s.income, 0);
+        const remainingGoal = Math.max(0, weeklyGoal - weeklyIncome);
+        const dailyNeeded = daysLeft > 0 ? remainingGoal / daysLeft : 0;
+
+        // Projeção baseada na média dos dias trabalhados
+        const daysWorked = new Set(currentWeekShifts.map(s => s.date)).size || 1;
+        const currentDailyAvg = weeklyIncome / daysWorked;
+        const projectedIncome = weeklyIncome + (currentDailyAvg * (daysLeft - 1));
+        const turboIncome = projectedIncome + (daysLeft * 25); // Modo turbo: +R$ 25/dia
+
+        return {
+          weeklyIncome,
+          remainingGoal,
+          daysLeft,
+          dailyNeeded,
+          projectedIncome: Math.round(projectedIncome),
+          turboIncome: Math.round(turboIncome),
+          progressPercent: Math.min(100, Math.round((weeklyIncome / weeklyGoal) * 100))
+        };
+      }, [shifts, weeklyGoal]);
+
+      // Métricas do Computador de Bordo
+      const totalMetrics = useMemo(() => {
+        const income = shifts.reduce((acc, s) => acc + s.income, 0);
+        const km = shifts.reduce((acc, s) => acc + s.km, 0);
+        const hours = shifts.reduce((acc, s) => acc + s.hours, 0);
+        const trips = shifts.reduce((acc, s) => acc + s.trips, 0);
+
+        return {
+          income,
+          km,
+          hours,
+          trips,
+          perHour: hours > 0 ? (income / hours).toFixed(2) : "0.00",
+          perKm: km > 0 ? (income / km).toFixed(2) : "0.00",
+          perTrip: trips > 0 ? (income / trips).toFixed(2) : "0.00",
+        };
+      }, [shifts]);
+
+      // Totais das Dívidas
+      const debtTotals = useMemo(() => {
+        const totalTarget = debts.reduce((acc, d) => acc + d.target, 0);
+        const totalPaid = debts.reduce((acc, d) => acc + d.current, 0);
+        const allCompleted = debts.length > 0 && debts.every(d => d.current >= d.target);
+        const percent = totalTarget > 0 ? Math.round((totalPaid / totalTarget) * 100) : 100;
+        return { totalTarget, totalPaid, allCompleted, percent };
+      }, [debts]);
+
+      // Submeter diária de entregas
+      const handleAddShift = (e) => {
+        e.preventDefault();
+        const income = parseFloat(shiftForm.income) || 0;
+        const hours = parseFloat(shiftForm.hours) || 0;
+        const km = parseFloat(shiftForm.km) || 0;
+        const trips = parseInt(shiftForm.trips) || 0;
+
+        if (income <= 0) return;
+
+        const newShift = {
+          id: Date.now(),
+          date: shiftForm.date,
+          income,
+          hours,
+          km,
+          trips,
+        };
+
+        setShifts([newShift, ...shifts]);
+        setWallet(prev => prev + income);
+        setIsShiftModalOpen(false);
+        setShiftForm({
+          date: new Date().toISOString().split("T")[0],
+          income: "",
+          hours: "",
+          km: "",
+          trips: "",
+        });
+      };
+
+      // Abater meta com saldo da carteira
+      const handlePayDebt = (e) => {
+        e.preventDefault();
+        const amt = parseFloat(payAmount) || 0;
+        if (amt <= 0 || amt > wallet || !selectedDebt) return;
+
+        const needed = selectedDebt.target - selectedDebt.current;
+        const actualPay = Math.min(amt, needed);
+
+        setDebts(prev =>
+          prev.map(d => {
+            if (d.id === selectedDebt.id) {
+              const updated = d.current + actualPay;
+              if (updated >= d.target && window.confetti) {
+                window.confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+              }
+              return { ...d, current: updated };
+            }
+            return d;
+          })
+        );
+
+        setWallet(prev => prev - actualPay);
+        setIsPayModalOpen(false);
+        setPayAmount("");
+        setSelectedDebt(null);
+      };
+
+      // Adicionar nova meta
+      const handleAddDebt = (e) => {
+        e.preventDefault();
+        const target = parseFloat(newDebtForm.target) || 0;
+        if (!newDebtForm.name || target <= 0) return;
+
+        setDebts([...debts, { id: Date.now(), name: newDebtForm.name, target, current: 0 }]);
+        setNewDebtForm({ name: "", target: "" });
+        setIsNewDebtModalOpen(false);
+      };
+
+      return (
+        <div className="max-w-md mx-auto p-4 space-y-5">
+          
+          {/* TOPO: Cabeçalho & Carteira */}
+          <header className="flex justify-between items-center bg-gray-900/80 backdrop-blur border border-gray-800 p-4 rounded-2xl">
+            <div>
+              <span className="text-xs text-gray-400 font-semibold uppercase tracking-wider">Saldo em Pontos (R$)</span>
+              <div className="text-2xl font-extrabold text-amber-400">
+                R$ {wallet.toFixed(2)}
+              </div>
+            </div>
+            <button
+              onClick={() => setIsShiftModalOpen(true)}
+              className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-95 transition"
+            >
+              <Icon name="plus-circle" size={18} />
+              <span>Diária</span>
+            </button>
+          </header>
+
+          {/* ACELERÔMETRO SEMANAL */}
+          <section className="bg-gray-900/90 border border-gray-800 p-4 rounded-2xl relative overflow-hidden">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1.5">
+                <Icon name="target" size={15} /> Meta Semanal (R$ {weeklyGoal})
+              </span>
+              <span className="text-xs text-gray-400">{weekStats.daysLeft} dias restantes</span>
+            </div>
+
+            <div className="w-full bg-gray-800 h-3 rounded-full overflow-hidden mb-3">
+              <div
+                className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-500"
+                style={{ width: `${weekStats.progressPercent}%` }}
+              ></div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-center pt-1 border-t border-gray-800/60">
+              <div>
+                <p className="text-[11px] text-gray-400">Feito na semana</p>
+                <p className="text-sm font-bold text-emerald-400">R$ {weekStats.weeklyIncome.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-400">Ritmo Necessário</p>
+                <p className="text-sm font-bold text-amber-400">
+                  {weekStats.remainingGoal > 0 ? `R$ ${weekStats.dailyNeeded.toFixed(2)}/dia` : "Meta Batida! 🎉"}
+                </p>
+              </div>
+            </div>
+
+            {/* Card de Projeção / Modo Turbo */}
+            <div className="mt-3 bg-gray-800/60 p-3 rounded-xl text-xs space-y-1 text-gray-300">
+              <div className="flex justify-between">
+                <span>Mantendo o ritmo atual:</span>
+                <span className="font-semibold text-white">~R$ {weekStats.projectedIncome}</span>
+              </div>
+              <div className="flex justify-between text-emerald-400">
+                <span className="flex items-center gap-1"><Icon name="zap" size={14} /> Modo Turbo (+R$ 25/dia):</span>
+                <span className="font-bold">~R$ {weekStats.turboIncome}</span>
+              </div>
+            </div>
+          </section>
+
+          {/* COMPUTADOR DE BORDO */}
+          <section className="grid grid-cols-3 gap-2">
+            <div className="bg-gray-900 border border-gray-800 p-3 rounded-xl text-center">
+              <span className="text-[10px] text-gray-400 block font-semibold">R$ / HORA</span>
+              <span className="text-sm font-extrabold text-white">R$ {totalMetrics.perHour}</span>
+            </div>
+            <div className="bg-gray-900 border border-gray-800 p-3 rounded-xl text-center">
+              <span className="text-[10px] text-gray-400 block font-semibold">R$ / KM</span>
+              <span className="text-sm font-extrabold text-white">R$ {totalMetrics.perKm}</span>
+            </div>
+            <div className="bg-gray-900 border border-gray-800 p-3 rounded-xl text-center">
+              <span className="text-[10px] text-gray-400 block font-semibold">TICKET MÉD.</span>
+              <span className="text-sm font-extrabold text-white">R$ {totalMetrics.perTrip}</span>
+            </div>
+          </section>
+
+          {/* TRILHA DO ASFALTO (METAS / DÍVIDAS) */}
+          <section className="bg-gray-900/60 border border-gray-800 p-4 rounded-2xl">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="font-extrabold text-base text-white flex items-center gap-2">
+                  <Icon name="map-pin" size={18} className="text-amber-400" /> A Trilha da Liberdade
+                </h2>
+                <p className="text-xs text-gray-400">
+                  {debtTotals.percent}% das dívidas ativas quitadas
+                </p>
+              </div>
+              <button
+                onClick={() => setIsNewDebtModalOpen(true)}
+                className="text-xs text-gray-400 hover:text-white bg-gray-800 px-2.5 py-1.5 rounded-lg flex items-center gap-1 border border-gray-700"
+              >
+                <Icon name="plus" size={14} /> Meta
+              </button>
+            </div>
+
+            {/* Trilha Visual com Checkpoints */}
+            <div className="relative pl-6 space-y-8 my-4">
+              {/* Linha de asfalto central da trilha */}
+              <div className="absolute left-[31px] top-4 bottom-4 w-1 asphalt-line -translate-x-1/2"></div>
+
+              {debts.map((debt, index) => {
+                const isPaid = debt.current >= debt.target;
+                const inProgress = debt.current > 0 && !isPaid;
+
+                return (
+                  <div key={debt.id} className="relative flex items-center gap-4">
+                    {/* Marcador do Checkpoint / Moto */}
+                    <div
+                      className={`z-10 w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs border-2 shadow-lg transition-all ${
+                        isPaid
+                          ? "bg-emerald-500 border-emerald-400 text-black shadow-emerald-500/20"
+                          : inProgress
+                          ? "bg-amber-400 border-yellow-300 text-black animate-pulse"
+                          : "bg-gray-800 border-gray-700 text-gray-400"
+                      }`}
+                    >
+                      {isPaid ? (
+                        <Icon name="check" size={18} />
+                      ) : inProgress ? (
+                        <Icon name="bike" size={18} />
+                      ) : (
+                        index + 1
+                      )}
+                    </div>
+
+                    {/* Card da Meta */}
+                    <div className="flex-1 bg-gray-900 border border-gray-800 p-3.5 rounded-xl">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="font-bold text-sm text-gray-200">{debt.name}</span>
+                        <span className={`text-xs font-semibold ${isPaid ? "text-emerald-400" : "text-gray-400"}`}>
+                          R$ {debt.current} / {debt.target}
+                        </span>
+                      </div>
+
+                      {/* Mini barra de progresso do checkpoint */}
+                      <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden my-2">
+                        <div
+                          className={`h-full ${isPaid ? "bg-emerald-400" : "bg-amber-400"}`}
+                          style={{ width: `${Math.min(100, (debt.current / debt.target) * 100)}%` }}
+                        ></div>
+                      </div>
+
+                      {!isPaid && (
+                        <button
+                          onClick={() => {
+                            setSelectedDebt(debt);
+                            setIsPayModalOpen(true);
+                          }}
+                          disabled={wallet <= 0}
+                          className={`w-full text-xs font-bold py-1.5 rounded-lg mt-1 transition ${
+                            wallet > 0
+                              ? "bg-amber-400 hover:bg-amber-300 text-black shadow"
+                              : "bg-gray-800 text-gray-500 cursor-not-allowed"
+                          }`}
+                        >
+                          {wallet > 0 ? "Abater com Saldo" : "Sem saldo disponível"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* FASE 2: Preview do Carro Próprio */}
+            <div className={`mt-8 p-4 rounded-xl border-2 border-dashed text-center transition ${
+              debtTotals.allCompleted
+                ? "bg-emerald-950/40 border-emerald-500 text-emerald-300"
+                : "bg-gray-950/40 border-gray-800 text-gray-600"
+            }`}>
+              <div className="flex justify-center mb-1">
+                <Icon name="car" size={26} />
+              </div>
+              <h3 className="font-extrabold text-sm uppercase">Fase 2: Rota do Carro Próprio</h3>
+              <p className="text-xs mt-0.5">
+                {debtTotals.allCompleted
+                  ? "🎉 PARABÉNS! Dívidas zeradas! A Trilha da Entrada do Carro está liberada!"
+                  : "🔒 Bloqueado: Quite todas as metas da Fase 1 para destravar a rota da entrada do carro."}
+              </p>
+            </div>
+          </section>
+
+          {/* MODAL: Registrar Diária */}
+          {isShiftModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-gray-900 border border-gray-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="bike" size={18} className="text-amber-400" /> Registrar Turno
+                  </h3>
+                  <button onClick={() => setIsShiftModalOpen(false)} className="text-gray-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleAddShift} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-gray-400 block mb-1">Faturamento Líquido (R$)*</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      placeholder="Ex: 145.50"
+                      value={shiftForm.income}
+                      onChange={e => setShiftForm({ ...shiftForm, income: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">Horas na Pista</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="Ex: 6.5"
+                        value={shiftForm.hours}
+                        onChange={e => setShiftForm({ ...shiftForm, hours: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-gray-400 block mb-1">Km Rodados</label>
+                      <input
+                        type="number"
+                        step="1"
+                        placeholder="Ex: 95"
+                        value={shiftForm.km}
+                        onChange={e => setShiftForm({ ...shiftForm, km: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-400 block mb-1">Qtd. de Corridas</label>
+                    <input
+                      type="number"
+                      placeholder="Ex: 14"
+                      value={shiftForm.trips}
+                      onChange={e => setShiftForm({ ...shiftForm, trips: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl mt-2 active:scale-95 transition"
+                  >
+                    Salvar na Carteira
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: Abater Saldo */}
+          {isPayModalOpen && selectedDebt && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-gray-900 border border-gray-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">Abater Meta</h3>
+                  <button onClick={() => setIsPayModalOpen(false)} className="text-gray-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mb-3">
+                  Quanto do seu saldo disponível (<strong>R$ {wallet.toFixed(2)}</strong>) você quer aplicar em <strong>{selectedDebt.name}</strong>?
+                </p>
+                <form onSubmit={handlePayDebt} className="space-y-3">
+                  <input
+                    type="number"
+                    step="0.01"
+                    max={wallet}
+                    placeholder={`Máx: R$ ${Math.min(wallet, selectedDebt.target - selectedDebt.current)}`}
+                    value={payAmount}
+                    onChange={e => setPayAmount(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPayAmount(Math.min(wallet, selectedDebt.target - selectedDebt.current).toString())}
+                      className="bg-gray-800 hover:bg-gray-700 text-xs px-2.5 py-1.5 rounded-lg border border-gray-700 text-gray-300"
+                    >
+                      Usar Tudo Possível
+                    </button>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-amber-400 hover:bg-amber-300 text-black font-bold py-2.5 rounded-xl active:scale-95 transition"
+                  >
+                    Confirmar Pagamento
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: Nova Meta */}
+          {isNewDebtModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-gray-900 border border-gray-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">Adicionar Checkpoint/Meta</h3>
+                  <button onClick={() => setIsNewDebtModalOpen(false)} className="text-gray-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleAddDebt} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-gray-400 block mb-1">Nome da Conta / Despesa</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Empréstimo do Banco"
+                      value={newDebtForm.name}
+                      onChange={e => setNewDebtForm({ ...newDebtForm, name: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-400 block mb-1">Valor Total (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      placeholder="Ex: 600.00"
+                      value={newDebtForm.target}
+                      onChange={e => setNewDebtForm({ ...newDebtForm, target: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition"
+                  >
+                    Inserir na Trilha
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
