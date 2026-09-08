@@ -69,28 +69,22 @@
       return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
     };
 
-    // Histórico completo extraído das capturas da Uber
-    const initialHistoricalShifts = [
-      // Semana 10/08 a 16/08
-      { id: 901,  date: "2026-08-12", income: 177.82, hours: 6.383, km: 0, trips: 13 }, // 6h 23m
-      { id: 902,  date: "2026-08-13", income: 75.93,  hours: 2.266, km: 0, trips: 4 },  // 2h 16m
-
-      // Semana 17/08 a 23/08 (Pico R$ 185,52 na quinta)
-      { id: 1000, date: "2026-08-17", income: 36.40,  hours: 1.933, km: 0, trips: 3 },  // 1h 56m
-      { id: 1001, date: "2026-08-18", income: 100.31, hours: 4.166, km: 0, trips: 6 },  // 4h 10m
-      { id: 1002, date: "2026-08-19", income: 115.93, hours: 6.333, km: 0, trips: 12 }, // 6h 20m
-      { id: 1003, date: "2026-08-20", income: 185.52, hours: 7.950, km: 0, trips: 15 }, // 7h 57m
-      { id: 1004, date: "2026-08-21", income: 112.15, hours: 5.016, km: 0, trips: 9 },  // 5h 1m
-      { id: 1005, date: "2026-08-22", income: 20.80,  hours: 1.200, km: 0, trips: 3 },  // 1h 12m
-
-      // Semana 24/08 a 30/08 (Total R$ 941,19 | 91 viagens | 39h 34m)
-      { id: 1006, date: "2026-08-24", income: 59.76,  hours: 2.766, km: 0, trips: 8 },  // 2h 46m
-      { id: 1007, date: "2026-08-25", income: 103.64, hours: 5.150, km: 0, trips: 13 }, // 5h 9m
-      { id: 1008, date: "2026-08-26", income: 227.38, hours: 10.166, km: 0, trips: 21 },// 10h 10m
-      { id: 1009, date: "2026-08-27", income: 166.56, hours: 7.566, km: 0, trips: 19 }, // 7h 34m
-      { id: 1010, date: "2026-08-28", income: 150.69, hours: 4.783, km: 0, trips: 10 }, // 4h 47m
-      { id: 1011, date: "2026-08-29", income: 88.73,  hours: 3.466, km: 0, trips: 8 },  // 3h 28m
-      { id: 1012, date: "2026-08-30", income: 144.43, hours: 5.650, km: 0, trips: 12 }, // 5h 39m
+    const baseHistoricalShifts = [
+      { id: 901,  date: "2026-08-12", income: 177.82, hours: 6.383, km: 0, trips: 13, allocations: {} },
+      { id: 902,  date: "2026-08-13", income: 75.93,  hours: 2.266, km: 0, trips: 4,  allocations: {} },
+      { id: 1000, date: "2026-08-17", income: 36.40,  hours: 1.933, km: 0, trips: 3,  allocations: {} },
+      { id: 1001, date: "2026-08-18", income: 100.31, hours: 4.166, km: 0, trips: 6,  allocations: {} },
+      { id: 1002, date: "2026-08-19", income: 115.93, hours: 6.333, km: 0, trips: 12, allocations: {} },
+      { id: 1003, date: "2026-08-20", income: 185.52, hours: 7.950, km: 0, trips: 15, allocations: {} },
+      { id: 1004, date: "2026-08-21", income: 112.15, hours: 5.016, km: 0, trips: 9,  allocations: {} },
+      { id: 1005, date: "2026-08-22", income: 20.80,  hours: 1.200, km: 0, trips: 3,  allocations: {} },
+      { id: 1006, date: "2026-08-24", income: 59.76,  hours: 2.766, km: 0, trips: 8,  allocations: {} },
+      { id: 1007, date: "2026-08-25", income: 103.64, hours: 5.150, km: 0, trips: 13, allocations: {} },
+      { id: 1008, date: "2026-08-26", income: 227.38, hours: 10.166, km: 0, trips: 21, allocations: {} },
+      { id: 1009, date: "2026-08-27", income: 166.56, hours: 7.566, km: 0, trips: 19, allocations: {} },
+      { id: 1010, date: "2026-08-28", income: 150.69, hours: 4.783, km: 0, trips: 10, allocations: {} },
+      { id: 1011, date: "2026-08-29", income: 88.73,  hours: 3.466, km: 0, trips: 8,  allocations: {} },
+      { id: 1012, date: "2026-08-30", income: 144.43, hours: 5.650, km: 0, trips: 12, allocations: {} },
     ];
 
     const initialDebtsList = [
@@ -127,25 +121,54 @@
       { id: 218, name: "Ferragem", target: 353.00, current: 0 },
     ];
 
+    const recoverAllShifts = () => {
+      const keys = ["rota_shifts_master", "rota_shifts_v4", "rota_shifts_v3", "rota_shifts_v2", "rota_shifts"];
+      let combined = [...baseHistoricalShifts];
+      const seen = new Set(combined.map(s => `${s.date}_${s.income}`));
+
+      keys.forEach(k => {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) {
+              arr.forEach(item => {
+                const key = `${item.date}_${item.income}`;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  combined.push({ allocations: {}, ...item });
+                }
+              });
+            }
+          }
+        } catch(e) {}
+      });
+
+      return combined.sort((a, b) => b.date.localeCompare(a.date));
+    };
+
     function App() {
       const [wallet, setWallet] = useState(() => {
-        const saved = localStorage.getItem("rota_wallet_v4");
-        return saved ? JSON.parse(saved) : 51.17;
+        const saved = localStorage.getItem("rota_wallet_master");
+        if (saved) return JSON.parse(saved);
+        const oldWallet = localStorage.getItem("rota_wallet_v4") || localStorage.getItem("rota_wallet");
+        return oldWallet ? JSON.parse(oldWallet) : 51.17;
       });
 
-      const [shifts, setShifts] = useState(() => {
-        const saved = localStorage.getItem("rota_shifts_v4");
-        return saved ? JSON.parse(saved) : initialHistoricalShifts;
-      });
+      const [shifts, setShifts] = useState(() => recoverAllShifts());
 
       const [expenses, setExpenses] = useState(() => {
-        const saved = localStorage.getItem("rota_expenses_v4");
-        return saved ? JSON.parse(saved) : [];
+        const saved = localStorage.getItem("rota_expenses_master");
+        if (saved) return JSON.parse(saved);
+        const old = localStorage.getItem("rota_expenses_v4") || localStorage.getItem("rota_expenses");
+        return old ? JSON.parse(old) : [];
       });
 
       const [debts, setDebts] = useState(() => {
-        const saved = localStorage.getItem("rota_debts_v4");
-        return saved ? JSON.parse(saved) : initialDebtsList;
+        const saved = localStorage.getItem("rota_debts_master");
+        if (saved) return JSON.parse(saved);
+        const old = localStorage.getItem("rota_debts_v3") || localStorage.getItem("rota_debts_v2");
+        return old ? JSON.parse(old) : initialDebtsList;
       });
 
       const [weeklyGoal, setWeeklyGoal] = useState(() => {
@@ -180,10 +203,10 @@
       const [debtForm, setDebtForm] = useState({ name: "", target: "" });
 
       useEffect(() => {
-        localStorage.setItem("rota_wallet_v4", JSON.stringify(wallet));
-        localStorage.setItem("rota_shifts_v4", JSON.stringify(shifts));
-        localStorage.setItem("rota_expenses_v4", JSON.stringify(expenses));
-        localStorage.setItem("rota_debts_v4", JSON.stringify(debts));
+        localStorage.setItem("rota_wallet_master", JSON.stringify(wallet));
+        localStorage.setItem("rota_shifts_master", JSON.stringify(shifts));
+        localStorage.setItem("rota_expenses_master", JSON.stringify(expenses));
+        localStorage.setItem("rota_debts_master", JSON.stringify(debts));
         localStorage.setItem("rota_goal", weeklyGoal.toString());
         if (window.lucide) window.lucide.createIcons();
       }, [wallet, shifts, expenses, debts, weeklyGoal]);
@@ -244,7 +267,6 @@
         const weekExpenses = expenses.filter(e => e.date >= startISO && e.date <= endISO);
         const maxDailyIncome = Math.max(...days.map(d => d.income), 0);
 
-        // Meta semanal de 800
         const daysLeft = weekOffset === 0 ? Math.max(1, 7 - currentDay + 1) : 7;
         const remainingGoal = Math.max(0, weeklyGoal - totalIncome);
         const dailyNeeded = daysLeft > 0 ? (remainingGoal / daysLeft) : 0;
@@ -302,7 +324,7 @@
         };
       }, [selectedDayIndex, weekData]);
 
-      // Salvar Turno + Pagamentos
+      // Salvar Turno com rastreio de alocação
       const handleSaveShift = (e) => {
         e.preventDefault();
         const income = parseFloat(shiftForm.income) || 0;
@@ -322,32 +344,42 @@
           return;
         }
 
-        if (totalAllocated > 0) {
+        if (editingShiftId) {
+          const oldShift = shifts.find(s => s.id === editingShiftId);
+          const oldAllocations = oldShift?.allocations || {};
+
+          // Ajusta as metas com base na diferença entre alocação antiga e nova
           setDebts(prev =>
             prev.map(d => {
-              const allocatedToThis = parseFloat(allocations[d.id]) || 0;
-              if (allocatedToThis > 0) {
-                const updated = d.current + allocatedToThis;
-                return { ...d, current: Math.min(d.target, updated) };
-              }
-              return d;
+              const oldPaidHere = parseFloat(oldAllocations[d.id]) || 0;
+              const newPaidHere = parseFloat(allocations[d.id]) || 0;
+              const diff = newPaidHere - oldPaidHere;
+              return { ...d, current: Math.max(0, Math.min(d.target, d.current + diff)) };
             })
           );
 
-          if (window.confetti) {
-            window.confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-          }
-        }
-
-        const leftOver = income - totalAllocated;
-
-        if (editingShiftId) {
-          const oldShift = shifts.find(s => s.id === editingShiftId);
-          const diff = income - (oldShift ? oldShift.income : 0);
-          setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, income, hours, km, trips } : s)));
-          setWallet(prev => Math.max(0, prev + diff - totalAllocated));
+          const diffIncome = income - (oldShift ? oldShift.income : 0);
+          setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, income, hours, km, trips, allocations } : s)));
+          setWallet(prev => Math.max(0, prev + diffIncome - totalAllocated));
         } else {
-          setShifts([{ id: Date.now(), date: shiftForm.date, income, hours, km, trips }, ...shifts]);
+          if (totalAllocated > 0) {
+            setDebts(prev =>
+              prev.map(d => {
+                const allocatedToThis = parseFloat(allocations[d.id]) || 0;
+                if (allocatedToThis > 0) {
+                  return { ...d, current: Math.min(d.target, d.current + allocatedToThis) };
+                }
+                return d;
+              })
+            );
+
+            if (window.confetti) {
+              window.confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+            }
+          }
+
+          const leftOver = income - totalAllocated;
+          setShifts([{ id: Date.now(), date: shiftForm.date, income, hours, km, trips, allocations }, ...shifts]);
           setWallet(prev => Math.max(0, prev + leftOver));
         }
 
@@ -372,17 +404,35 @@
           km: shift.km ? shift.km.toString() : "",
           trips: shift.trips ? shift.trips.toString() : "",
         });
-        setAllocations({});
+        setAllocations(shift.allocations || {});
         setIsShiftModalOpen(true);
       };
 
+      // EXCLUSÃO DE TURNO: ESTORNA O VALOR PAGO NAS METAS
       const handleDeleteShift = (id) => {
-        if (!confirm("Tem certeza que deseja excluir esse turno?")) return;
+        if (!confirm("Tem certeza que deseja excluir esse turno? Os valores pagos em contas com esse dinheiro serão estornados.")) return;
         const shiftToDelete = shifts.find(s => s.id === id);
         if (!shiftToDelete) return;
 
+        // Estorna os valores das metas pagas nesse turno
+        const shiftAllocations = shiftToDelete.allocations || {};
+        setDebts(prev =>
+          prev.map(d => {
+            const paidInThisShift = parseFloat(shiftAllocations[d.id]) || 0;
+            if (paidInThisShift > 0) {
+              return { ...d, current: Math.max(0, d.current - paidInThisShift) };
+            }
+            return d;
+          })
+        );
+
+        // Remove o turno e ajusta saldo não alocado
         setShifts(prev => prev.filter(s => s.id !== id));
-        setWallet(prev => Math.max(0, prev - shiftToDelete.income));
+        let totalAllocatedInShift = 0;
+        Object.values(shiftAllocations).forEach(v => { totalAllocatedInShift += parseFloat(v) || 0; });
+        const unallocatedIncome = shiftToDelete.income - totalAllocatedInShift;
+        setWallet(prev => Math.max(0, prev - unallocatedIncome));
+
         setIsShiftModalOpen(false);
         setEditingShiftId(null);
       };
@@ -399,7 +449,7 @@
           const diff = amount - oldAmount;
 
           if (diff > wallet) {
-            alert("Saldo insuficiente na carteira para esse aumento!");
+            alert("Saldo insuficiente na carteira!");
             return;
           }
 
@@ -463,6 +513,12 @@
       const handleDeleteDebt = (id) => {
         if (!confirm("Deseja realmente apagar esta meta?")) return;
         setDebts(prev => prev.filter(d => d.id !== id));
+      };
+
+      // Função manual de reset caso precise zerar o valor pago de uma meta específica
+      const handleResetDebtPayment = (id) => {
+        if (!confirm("Deseja zerar o valor pago desta conta?")) return;
+        setDebts(prev => prev.map(d => (d.id === id ? { ...d, current: 0 } : d)));
       };
 
       return (
@@ -589,7 +645,7 @@
             </div>
           </section>
 
-          {/* PAINEL SEMANAL UBER + ACELERÔMETRO DA META DE 800 */}
+          {/* PAINEL SEMANAL UBER + ACELERÔMETRO */}
           <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 relative">
             <div className="flex items-center justify-between text-zinc-300 mb-5">
               <button
@@ -618,7 +674,7 @@
               </button>
             </div>
 
-            {/* CARD: META SEMANAL (R$ 800) */}
+            {/* CARD: META SEMANAL */}
             <div className="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-4 mb-5 shadow-sm">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-xs font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1.5">
@@ -890,7 +946,7 @@
                     </p>
 
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                      {debts.filter(d => d.current < d.target).map(debt => {
+                      {debts.filter(d => d.current < d.target || (editingShiftId && shiftForm.allocations && shiftForm.allocations[d.id])).map(debt => {
                         const remaining = debt.target - debt.current;
                         return (
                           <div key={debt.id} className="bg-zinc-800/70 border border-zinc-700/60 p-2 rounded-xl flex items-center justify-between gap-2">
@@ -902,7 +958,6 @@
                               <input
                                 type="number"
                                 step="0.01"
-                                max={remaining}
                                 placeholder="R$ 0,00"
                                 value={allocations[debt.id] || ""}
                                 onChange={e => setAllocations({ ...allocations, [debt.id]: e.target.value })}
@@ -928,7 +983,7 @@
                       onClick={() => handleDeleteShift(editingShiftId)}
                       className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-bold py-2 rounded-xl text-xs active:scale-95 transition mt-1"
                     >
-                      Excluir Turno
+                      Excluir Turno (Estornar Contas)
                     </button>
                   )}
                 </form>
@@ -988,6 +1043,15 @@
                         </div>
 
                         <div className="flex items-center gap-1">
+                          {debt.current > 0 && (
+                            <button
+                              onClick={() => handleResetDebtPayment(debt.id)}
+                              className="p-1.5 text-zinc-500 hover:text-amber-400 transition"
+                              title="Zerar valor pago desta conta"
+                            >
+                              <Icon name="rotate-ccw" size={14} />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleOpenEditDebt(debt)}
                             className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
