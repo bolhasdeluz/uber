@@ -24,14 +24,21 @@
       color: #ffffff;
       -webkit-tap-highlight-color: transparent;
     }
-    .asphalt-line {
+    .road-track {
       background: repeating-linear-gradient(
-        to bottom,
+        to right,
         #facc15 0px,
-        #facc15 14px,
-        transparent 14px,
-        transparent 28px
+        #facc15 16px,
+        transparent 16px,
+        transparent 32px
       );
+    }
+    @keyframes bobble {
+      0%, 100% { transform: translateY(0px) rotate(0deg); }
+      50% { transform: translateY(-4px) rotate(2deg); }
+    }
+    .bike-animation {
+      animation: bobble 1.8s ease-in-out infinite;
     }
   </style>
 </head>
@@ -128,14 +135,13 @@
       // Modais
       const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
       const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-      const [isPayModalOpen, setIsPayModalOpen] = useState(false);
-      const [isNewDebtModalOpen, setIsNewDebtModalOpen] = useState(false);
-      const [selectedDebt, setSelectedDebt] = useState(null);
-      const [payAmount, setPayAmount] = useState("");
+      const [isDebtsListModalOpen, setIsDebtsListModalOpen] = useState(false);
+      const [isDebtEditModalOpen, setIsDebtEditModalOpen] = useState(false);
 
-      // Estados de Edição
+      // Edições
       const [editingShiftId, setEditingShiftId] = useState(null);
       const [editingExpenseId, setEditingExpenseId] = useState(null);
+      const [editingDebtId, setEditingDebtId] = useState(null);
 
       const [shiftForm, setShiftForm] = useState({
         date: getTodayLocalDate(),
@@ -145,13 +151,9 @@
         trips: "",
       });
 
-      const [expenseForm, setExpenseForm] = useState({
-        amount: "",
-        description: "",
-        date: getTodayLocalDate(),
-      });
-
-      const [newDebtForm, setNewDebtForm] = useState({ name: "", target: "" });
+      const [allocations, setAllocations] = useState({});
+      const [expenseForm, setExpenseForm] = useState({ amount: "", description: "", date: getTodayLocalDate() });
+      const [debtForm, setDebtForm] = useState({ name: "", target: "" });
 
       useEffect(() => {
         localStorage.setItem("rota_wallet", JSON.stringify(wallet));
@@ -162,7 +164,7 @@
         if (window.lucide) window.lucide.createIcons();
       }, [wallet, shifts, expenses, debts, weeklyGoal]);
 
-      // Montagem da Semana Selecionada
+      // Métricas da Semana (Painel Uber + Meta de 800)
       const weekData = useMemo(() => {
         const now = new Date();
         const currentDay = now.getDay() === 0 ? 7 : now.getDay();
@@ -216,8 +218,13 @@
         const startISO = new Date(monday.getTime() - monday.getTimezoneOffset() * 60000).toISOString().split("T")[0];
         const endISO = new Date(sunday.getTime() - sunday.getTimezoneOffset() * 60000).toISOString().split("T")[0];
         const weekExpenses = expenses.filter(e => e.date >= startISO && e.date <= endISO);
-
         const maxDailyIncome = Math.max(...days.map(d => d.income), 0);
+
+        // Cálculos da Meta Semanal (R$ 800)
+        const daysLeft = weekOffset === 0 ? Math.max(1, 7 - currentDay + 1) : 7;
+        const remainingGoal = Math.max(0, weeklyGoal - totalIncome);
+        const dailyNeeded = daysLeft > 0 ? (remainingGoal / daysLeft) : 0;
+        const goalPercent = Math.min(100, Math.round((totalIncome / weeklyGoal) * 100));
 
         return {
           days,
@@ -228,15 +235,21 @@
           totalTrips,
           weekExpenses,
           maxDailyIncome,
+          daysLeft,
+          remainingGoal,
+          dailyNeeded,
+          goalPercent
         };
-      }, [shifts, expenses, weekOffset]);
+      }, [shifts, expenses, weekOffset, weeklyGoal]);
 
+      // Totais da Trilha
       const debtTotals = useMemo(() => {
         const totalTarget = debts.reduce((acc, d) => acc + d.target, 0);
         const totalPaid = debts.reduce((acc, d) => acc + d.current, 0);
         const allCompleted = debts.length > 0 && debts.every(d => d.current >= d.target);
-        const percent = totalTarget > 0 ? Math.round((totalPaid / totalTarget) * 100) : 100;
-        return { totalTarget, totalPaid, allCompleted, percent };
+        const percent = totalTarget > 0 ? Math.min(100, Math.round((totalPaid / totalTarget) * 100)) : 100;
+        const totalRemaining = Math.max(0, totalTarget - totalPaid);
+        return { totalTarget, totalPaid, totalRemaining, allCompleted, percent };
       }, [debts]);
 
       const activeStats = useMemo(() => {
@@ -265,7 +278,7 @@
         };
       }, [selectedDayIndex, weekData]);
 
-      // Turnos: Salvar, Editar e Deletar
+      // Salvar Turno + Pagamentos
       const handleSaveShift = (e) => {
         e.preventDefault();
         const income = parseFloat(shiftForm.income) || 0;
@@ -275,33 +288,48 @@
 
         if (income <= 0) return;
 
+        let totalAllocated = 0;
+        Object.values(allocations).forEach(val => {
+          totalAllocated += parseFloat(val) || 0;
+        });
+
+        if (totalAllocated > (income + wallet)) {
+          alert("O valor alocado nas metas supera o faturado + saldo da carteira!");
+          return;
+        }
+
+        if (totalAllocated > 0) {
+          setDebts(prev =>
+            prev.map(d => {
+              const allocatedToThis = parseFloat(allocations[d.id]) || 0;
+              if (allocatedToThis > 0) {
+                const updated = d.current + allocatedToThis;
+                return { ...d, current: Math.min(d.target, updated) };
+              }
+              return d;
+            })
+          );
+
+          if (window.confetti) {
+            window.confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+          }
+        }
+
+        const leftOver = income - totalAllocated;
+
         if (editingShiftId) {
           const oldShift = shifts.find(s => s.id === editingShiftId);
-          const incomeDifference = income - (oldShift ? oldShift.income : 0);
-
-          setShifts(prev => prev.map(s => {
-            if (s.id === editingShiftId) {
-              return { ...s, date: shiftForm.date, income, hours, km, trips };
-            }
-            return s;
-          }));
-
-          setWallet(prev => Math.max(0, prev + incomeDifference));
+          const diff = income - (oldShift ? oldShift.income : 0);
+          setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, income, hours, km, trips } : s)));
+          setWallet(prev => Math.max(0, prev + diff - totalAllocated));
         } else {
-          const newShift = {
-            id: Date.now(),
-            date: shiftForm.date,
-            income,
-            hours,
-            km,
-            trips,
-          };
-          setShifts([newShift, ...shifts]);
-          setWallet(prev => prev + income);
+          setShifts([{ id: Date.now(), date: shiftForm.date, income, hours, km, trips }, ...shifts]);
+          setWallet(prev => Math.max(0, prev + leftOver));
         }
 
         setIsShiftModalOpen(false);
         setEditingShiftId(null);
+        setAllocations({});
         setShiftForm({
           date: getTodayLocalDate(),
           income: "",
@@ -320,11 +348,12 @@
           km: shift.km ? shift.km.toString() : "",
           trips: shift.trips ? shift.trips.toString() : "",
         });
+        setAllocations({});
         setIsShiftModalOpen(true);
       };
 
       const handleDeleteShift = (id) => {
-        if (!confirm("Tem certeza que deseja excluir esse lançamento de turno?")) return;
+        if (!confirm("Tem certeza que deseja excluir esse turno?")) return;
         const shiftToDelete = shifts.find(s => s.id === id);
         if (!shiftToDelete) return;
 
@@ -334,7 +363,7 @@
         setEditingShiftId(null);
       };
 
-      // Gastos Extras: Salvar, Editar e Deletar
+      // Gastos Extras
       const handleSaveExpense = (e) => {
         e.preventDefault();
         const amount = parseFloat(expenseForm.amount) || 0;
@@ -343,20 +372,14 @@
         if (editingExpenseId) {
           const oldExpense = expenses.find(exp => exp.id === editingExpenseId);
           const oldAmount = oldExpense ? oldExpense.amount : 0;
-          const diff = amount - oldAmount; // Se aumentou o gasto, reduz mais da carteira
+          const diff = amount - oldAmount;
 
           if (diff > wallet) {
-            alert("Saldo insuficiente na carteira para esse aumento de gasto!");
+            alert("Saldo insuficiente na carteira para esse aumento!");
             return;
           }
 
-          setExpenses(prev => prev.map(exp => {
-            if (exp.id === editingExpenseId) {
-              return { ...exp, date: expenseForm.date, amount, description: expenseForm.description || "Gasto Extra" };
-            }
-            return exp;
-          }));
-
+          setExpenses(prev => prev.map(exp => (exp.id === editingExpenseId ? { ...exp, date: expenseForm.date, amount, description: expenseForm.description || "Gasto Extra" } : exp)));
           setWallet(prev => prev - diff);
         } else {
           if (amount > wallet) {
@@ -364,93 +387,64 @@
             return;
           }
 
-          setExpenses([{
-            id: Date.now(),
-            amount,
-            description: expenseForm.description || "Gasto Extra",
-            date: expenseForm.date,
-          }, ...expenses]);
-
+          setExpenses([{ id: Date.now(), amount, description: expenseForm.description || "Gasto Extra", date: expenseForm.date }, ...expenses]);
           setWallet(prev => prev - amount);
         }
 
         setIsExpenseModalOpen(false);
         setEditingExpenseId(null);
-        setExpenseForm({
-          amount: "",
-          description: "",
-          date: getTodayLocalDate(),
-        });
+        setExpenseForm({ amount: "", description: "", date: getTodayLocalDate() });
       };
 
       const handleOpenEditExpense = (expense) => {
         setEditingExpenseId(expense.id);
-        setExpenseForm({
-          date: expense.date,
-          amount: expense.amount.toString(),
-          description: expense.description || "",
-        });
+        setExpenseForm({ date: expense.date, amount: expense.amount.toString(), description: expense.description || "" });
         setIsExpenseModalOpen(true);
       };
 
       const handleDeleteExpense = (id) => {
-        if (!confirm("Deseja apagar esse gasto extra? O valor será estornado de volta para a carteira.")) return;
+        if (!confirm("Deseja apagar esse gasto extra? O valor será estornado para a carteira.")) return;
         const expToDelete = expenses.find(exp => exp.id === id);
         if (!expToDelete) return;
 
         setExpenses(prev => prev.filter(exp => exp.id !== id));
-        setWallet(prev => prev + expToDelete.amount); // Devolve o valor à carteira
+        setWallet(prev => prev + expToDelete.amount);
         setIsExpenseModalOpen(false);
         setEditingExpenseId(null);
       };
 
-      // Abater Metas
-      const handlePayDebt = (e) => {
+      // Metas
+      const handleSaveDebt = (e) => {
         e.preventDefault();
-        const amt = parseFloat(payAmount) || 0;
-        if (amt <= 0 || amt > wallet || !selectedDebt) return;
+        const target = parseFloat(debtForm.target) || 0;
+        if (!debtForm.name || target <= 0) return;
 
-        const needed = selectedDebt.target - selectedDebt.current;
-        const actualPay = Math.min(amt, needed);
+        if (editingDebtId) {
+          setDebts(prev => prev.map(d => (d.id === editingDebtId ? { ...d, name: debtForm.name, target } : d)));
+        } else {
+          setDebts([...debts, { id: Date.now(), name: debtForm.name, target, current: 0 }]);
+        }
 
-        setDebts(prev =>
-          prev.map(d => {
-            if (d.id === selectedDebt.id) {
-              const updated = d.current + actualPay;
-              if (updated >= d.target && window.confetti) {
-                window.confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
-              }
-              return { ...d, current: updated };
-            }
-            return d;
-          })
-        );
+        setDebtForm({ name: "", target: "" });
+        setEditingDebtId(null);
+        setIsDebtEditModalOpen(false);
+      };
 
-        setWallet(prev => prev - actualPay);
-        setIsPayModalOpen(false);
-        setPayAmount("");
-        setSelectedDebt(null);
+      const handleOpenEditDebt = (debt) => {
+        setEditingDebtId(debt.id);
+        setDebtForm({ name: debt.name, target: debt.target.toString() });
+        setIsDebtEditModalOpen(true);
       };
 
       const handleDeleteDebt = (id) => {
-        if (!confirm("Deseja realmente apagar esta meta da lista?")) return;
+        if (!confirm("Deseja realmente apagar esta meta?")) return;
         setDebts(prev => prev.filter(d => d.id !== id));
-      };
-
-      const handleAddDebt = (e) => {
-        e.preventDefault();
-        const target = parseFloat(newDebtForm.target) || 0;
-        if (!newDebtForm.name || target <= 0) return;
-
-        setDebts([...debts, { id: Date.now(), name: newDebtForm.name, target, current: 0 }]);
-        setNewDebtForm({ name: "", target: "" });
-        setIsNewDebtModalOpen(false);
       };
 
       return (
         <div className="max-w-md mx-auto min-h-screen bg-black text-white p-4 space-y-6">
           
-          {/* TOPO: Carteira & Ações Rápidas */}
+          {/* TOPO: Carteira */}
           <header className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
             <div className="flex justify-between items-center mb-3">
               <div>
@@ -465,6 +459,7 @@
               <button
                 onClick={() => {
                   setEditingShiftId(null);
+                  setAllocations({});
                   setShiftForm({
                     date: getTodayLocalDate(),
                     income: "",
@@ -477,7 +472,7 @@
                 className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs active:scale-95 transition"
               >
                 <Icon name="plus-circle" size={16} />
-                <span>+ Diária</span>
+                <span>+ Diária & Metas</span>
               </button>
 
               <button
@@ -503,9 +498,76 @@
             </div>
           </header>
 
-          {/* PAINEL SEMANAL UBER */}
+          {/* MAPA VISUAL COM A MOTO */}
+          <section className="bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-800 rounded-3xl p-5 shadow-2xl relative overflow-hidden">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <span className="text-xs font-extrabold tracking-wider uppercase text-amber-400 flex items-center gap-1.5">
+                  <Icon name="map" size={16} /> Rota da Liberdade
+                </span>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  {debtTotals.percent}% percorrido • Falta R$ {debtTotals.totalRemaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setIsDebtsListModalOpen(true)}
+                className="text-xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-xl border border-zinc-700/80 flex items-center gap-1.5 transition active:scale-95"
+              >
+                <Icon name="list-checks" size={14} className="text-amber-400" />
+                <span>Ver Metas</span>
+              </button>
+            </div>
+
+            <div className="relative my-8 px-4">
+              <div className="h-6 w-full bg-zinc-800 rounded-full flex items-center relative px-2 shadow-inner border border-zinc-700/60">
+                <div className="h-1 w-full road-track opacity-70"></div>
+                <div
+                  className="absolute left-0 top-0 bottom-0 bg-emerald-500/30 rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${debtTotals.percent}%` }}
+                ></div>
+              </div>
+
+              <div
+                className="absolute top-1/2 -translate-y-1/2 transition-all duration-700 ease-out"
+                style={{
+                  left: `calc(1rem + (100% - 2rem - 48px) * ${debtTotals.percent / 100})`,
+                }}
+              >
+                <div className="bike-animation flex flex-col items-center">
+                  <div className="bg-amber-400 text-black text-[10px] font-extrabold px-1.5 py-0.5 rounded-full shadow-lg mb-1 whitespace-nowrap">
+                    {debtTotals.percent}%
+                  </div>
+                  <div className="w-12 h-12 bg-zinc-900 border-2 border-amber-400 rounded-2xl shadow-xl flex items-center justify-center text-amber-400 transform -scale-x-100">
+                    <Icon name="bike" size={26} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
+                <div className="w-8 h-8 rounded-xl bg-zinc-900 border border-zinc-700 flex items-center justify-center shadow-lg text-emerald-400">
+                  <Icon name="flag" size={18} />
+                </div>
+                <span className="text-[9px] font-bold text-zinc-500 mt-1 uppercase">Fim</span>
+              </div>
+            </div>
+
+            <div className="bg-zinc-900/60 border border-zinc-800/80 rounded-2xl p-3.5 flex justify-between items-center text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></div>
+                <span className="text-zinc-300">
+                  Total Pago: <strong className="text-emerald-400">R$ {debtTotals.totalPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                </span>
+              </div>
+              <span className="text-zinc-400">
+                Meta: R$ {debtTotals.totalTarget.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+          </section>
+
+          {/* PAINEL SEMANAL ESTILO UBER COM ACELERÔMETRO DA META DE 800 */}
           <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 relative">
-            <div className="flex items-center justify-between text-zinc-300 mb-6">
+            <div className="flex items-center justify-between text-zinc-300 mb-5">
               <button
                 onClick={() => {
                   setWeekOffset(prev => prev - 1);
@@ -532,6 +594,45 @@
               </button>
             </div>
 
+            {/* CARD: META SEMANAL (R$ 800) & MÉDIA DIÁRIA NECESSÁRIA */}
+            <div className="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-4 mb-5 shadow-sm">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1.5">
+                  <Icon name="target" size={15} /> Meta: R$ {weeklyGoal.toFixed(2)}/sem
+                </span>
+                <span className="text-xs text-zinc-400">
+                  {weekOffset === 0 ? `${weekData.daysLeft} dias restantes` : "Semana encerrada"}
+                </span>
+              </div>
+
+              <div className="w-full bg-zinc-800 h-2 rounded-full overflow-hidden mb-3">
+                <div
+                  className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-500"
+                  style={{ width: `${weekData.goalPercent}%` }}
+                ></div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-center pt-2 border-t border-zinc-800/60">
+                <div>
+                  <p className="text-[11px] text-zinc-400">Falta para os R$ 800</p>
+                  <p className="text-sm font-extrabold text-white">
+                    R$ {weekData.remainingGoal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-zinc-400">Média Necessária</p>
+                  <p className="text-sm font-extrabold text-amber-400">
+                    {weekData.remainingGoal > 0 ? (
+                      `R$ ${weekData.dailyNeeded.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / dia`
+                    ) : (
+                      "Meta Batida! 🎉"
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Valor em Destaque */}
             <div className="text-center mb-6">
               {selectedDayIndex !== null && (
                 <button
@@ -551,6 +652,7 @@
               {weekData.maxDailyIncome > 0 && `R$ ${weekData.maxDailyIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
 
+            {/* Gráfico de Barras */}
             <div className="relative pt-4 pb-2 border-b border-dashed border-zinc-700">
               <div className="h-36 flex items-end justify-between gap-1.5 px-1">
                 {weekData.days.map((day, idx) => {
@@ -598,7 +700,7 @@
               })}
             </div>
 
-            {/* Estatísticas de Trabalho */}
+            {/* Estatísticas */}
             <div className="mt-8 pt-4 border-t border-zinc-900">
               <div className="flex justify-between items-center mb-4">
                 <h4 className="text-lg font-bold tracking-tight">Estatísticas</h4>
@@ -636,7 +738,7 @@
               </div>
             </div>
 
-            {/* SEÇÃO DE GASTOS EXTRAS DO PERÍODO COM BOTÃO EDITAR/DELETAR */}
+            {/* Gastos Extras */}
             {activeStats.expensesList && activeStats.expensesList.length > 0 && (
               <div className="mt-6 pt-4 border-t border-zinc-900">
                 <span className="text-xs font-bold text-rose-400 uppercase tracking-wider block mb-2 flex items-center gap-1">
@@ -659,14 +761,14 @@
                         <button
                           onClick={() => handleOpenEditExpense(exp)}
                           className="text-zinc-500 hover:text-sky-400 p-1 transition"
-                          title="Editar gasto extra"
+                          title="Editar gasto"
                         >
                           <Icon name="pencil" size={13} />
                         </button>
                         <button
                           onClick={() => handleDeleteExpense(exp.id)}
                           className="text-zinc-500 hover:text-rose-400 p-1 transition"
-                          title="Excluir gasto e estornar valor"
+                          title="Excluir gasto"
                         >
                           <Icon name="trash-2" size={13} />
                         </button>
@@ -678,141 +780,21 @@
             )}
           </section>
 
-          {/* TRILHA DO ASFALTO */}
-          <section className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="font-extrabold text-base text-white flex items-center gap-2">
-                  <Icon name="map-pin" size={18} className="text-amber-400" /> A Trilha da Liberdade
-                </h2>
-                <p className="text-xs text-zinc-400">
-                  {debtTotals.percent}% pago (R$ {debtTotals.totalPaid.toFixed(2)} de R$ {debtTotals.totalTarget.toFixed(2)})
-                </p>
-              </div>
-              <button
-                onClick={() => setIsNewDebtModalOpen(true)}
-                className="text-xs text-zinc-400 hover:text-white bg-zinc-900 px-2.5 py-1.5 rounded-lg flex items-center gap-1 border border-zinc-800"
-              >
-                <Icon name="plus" size={14} /> Meta
-              </button>
-            </div>
-
-            <div className="relative pl-6 space-y-5 my-4">
-              <div className="absolute left-[31px] top-4 bottom-4 w-1 asphalt-line -translate-x-1/2"></div>
-
-              {debts.map((debt, index) => {
-                const isPaid = debt.current >= debt.target;
-                const inProgress = debt.current > 0 && !isPaid;
-
-                return (
-                  <div key={debt.id} className="relative flex items-center gap-4">
-                    <div
-                      className={`z-10 w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs border-2 shadow-lg transition-all flex-shrink-0 ${
-                        isPaid
-                          ? "bg-emerald-500 border-emerald-400 text-black shadow-emerald-500/20"
-                          : inProgress
-                          ? "bg-amber-400 border-yellow-300 text-black"
-                          : "bg-zinc-900 border-zinc-700 text-zinc-300"
-                      }`}
-                    >
-                      {isPaid ? (
-                        <Icon name="check" size={18} />
-                      ) : inProgress ? (
-                        <Icon name="bike" size={18} />
-                      ) : (
-                        <Icon name="circle-dot" size={15} />
-                      )}
-                    </div>
-
-                    <div className="flex-1 bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl hover:border-zinc-700 transition">
-                      <div className="flex justify-between items-start mb-1">
-                        <div>
-                          <span className="font-bold text-sm text-zinc-200 block">{debt.name}</span>
-                          <span className="text-[10px] text-zinc-400">
-                            Resta: R$ {(debt.target - debt.current).toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs font-semibold ${isPaid ? "text-emerald-400" : "text-zinc-400"}`}>
-                            R$ {debt.current.toFixed(0)} / {debt.target.toFixed(0)}
-                          </span>
-                          <button
-                            onClick={() => handleDeleteDebt(debt.id)}
-                            className="text-zinc-600 hover:text-rose-400 p-1"
-                            title="Remover meta"
-                          >
-                            <Icon name="trash-2" size={14} />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden my-2">
-                        <div
-                          className={`h-full transition-all duration-300 ${isPaid ? "bg-emerald-400" : "bg-amber-400"}`}
-                          style={{ width: `${Math.min(100, (debt.current / debt.target) * 100)}%` }}
-                        ></div>
-                      </div>
-
-                      {!isPaid ? (
-                        <button
-                          onClick={() => {
-                            setSelectedDebt(debt);
-                            setIsPayModalOpen(true);
-                          }}
-                          disabled={wallet <= 0}
-                          className={`w-full text-xs font-bold py-1.5 rounded-lg mt-1 transition flex items-center justify-center gap-1 ${
-                            wallet > 0
-                              ? "bg-amber-400 hover:bg-amber-300 text-black shadow active:scale-95"
-                              : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-                          }`}
-                        >
-                          <Icon name="coins" size={13} />
-                          <span>{wallet > 0 ? "Pagar com Saldo" : "Sem saldo para abater"}</span>
-                        </button>
-                      ) : (
-                        <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 mt-1 justify-center">
-                          <Icon name="check-circle" size={12} /> Meta Quitada!
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* FASE 2: Carro Próprio */}
-            <div className={`mt-8 p-4 rounded-xl border-2 border-dashed text-center transition ${
-              debtTotals.allCompleted
-                ? "bg-emerald-950/40 border-emerald-500 text-emerald-300"
-                : "bg-zinc-950/40 border-zinc-800 text-zinc-600"
-            }`}>
-              <div className="flex justify-center mb-1">
-                <Icon name="car" size={26} />
-              </div>
-              <h3 className="font-extrabold text-sm uppercase">Fase 2: Rota do Carro Próprio</h3>
-              <p className="text-xs mt-0.5">
-                {debtTotals.allCompleted
-                  ? "🎉 PARABÉNS! Dívidas zeradas! A Trilha da Entrada do Carro está liberada!"
-                  : "🔒 Bloqueado: Quite todas as metas cadastradas para destravar a rota da entrada do carro."}
-              </p>
-            </div>
-          </section>
-
-          {/* MODAL: Diária */}
+          {/* MODAL: REGISTRAR TURNO + PAGAR METAS */}
           {isShiftModalOpen && (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
-                <div className="flex justify-between items-center mb-4">
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl my-auto max-h-[90vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
                   <h3 className="font-bold text-base text-white flex items-center gap-2">
                     <Icon name="bike" size={18} className="text-amber-400" />
-                    {editingShiftId ? "Editar Turno" : "Registrar Turno"}
+                    {editingShiftId ? "Editar Turno" : "Fechar o Dia & Pagar Metas"}
                   </h3>
                   <button onClick={() => setIsShiftModalOpen(false)} className="text-zinc-400 hover:text-white">
                     <Icon name="x" size={20} />
                   </button>
                 </div>
 
-                <form onSubmit={handleSaveShift} className="space-y-3">
+                <form onSubmit={handleSaveShift} className="space-y-3 overflow-y-auto pr-1">
                   <div>
                     <label className="text-[11px] text-zinc-400 block mb-1">Data do Turno</label>
                     <input
@@ -825,7 +807,7 @@
                   </div>
 
                   <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Faturamento Líquido (R$)*</label>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Faturamento Feito Hoje (R$)*</label>
                     <input
                       type="number"
                       step="0.01"
@@ -837,54 +819,90 @@
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <div>
-                      <label className="text-[11px] text-zinc-400 block mb-1">Horas na Pista</label>
+                      <label className="text-[10px] text-zinc-400 block mb-1">Horas</label>
                       <input
                         type="number"
                         step="0.01"
                         placeholder="Ex: 6.5"
                         value={shiftForm.hours}
                         onChange={e => setShiftForm({ ...shiftForm, hours: e.target.value })}
-                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-zinc-400 block mb-1">Km Rodados</label>
+                      <label className="text-[10px] text-zinc-400 block mb-1">Km</label>
                       <input
                         type="number"
                         step="1"
                         placeholder="Ex: 95"
                         value={shiftForm.km}
                         onChange={e => setShiftForm({ ...shiftForm, km: e.target.value })}
-                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 block mb-1">Viagens</label>
+                      <input
+                        type="number"
+                        placeholder="Ex: 14"
+                        value={shiftForm.trips}
+                        onChange={e => setShiftForm({ ...shiftForm, trips: e.target.value })}
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Qtd. de Viagens</label>
-                    <input
-                      type="number"
-                      placeholder="Ex: 14"
-                      value={shiftForm.trips}
-                      onChange={e => setShiftForm({ ...shiftForm, trips: e.target.value })}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                    />
+                  {/* SEÇÃO: Escolha quais metas pagar hoje */}
+                  <div className="pt-3 border-t border-zinc-800">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                        <Icon name="coins" size={14} /> Pagar Metas com Esse Valor
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mb-2">
+                      Digite quanto deste faturamento você quer abater em cada conta hoje:
+                    </p>
+
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {debts.filter(d => d.current < d.target).map(debt => {
+                        const remaining = debt.target - debt.current;
+                        return (
+                          <div key={debt.id} className="bg-zinc-800/70 border border-zinc-700/60 p-2 rounded-xl flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <span className="text-xs font-bold text-zinc-200 block truncate">{debt.name}</span>
+                              <span className="text-[10px] text-zinc-400">Resta: R$ {remaining.toFixed(2)}</span>
+                            </div>
+                            <div className="w-24">
+                              <input
+                                type="number"
+                                step="0.01"
+                                max={remaining}
+                                placeholder="R$ 0,00"
+                                value={allocations[debt.id] || ""}
+                                onChange={e => setAllocations({ ...allocations, [debt.id]: e.target.value })}
+                                className="w-full bg-zinc-900 border border-zinc-600 rounded-lg px-2 py-1 text-xs text-white text-right focus:outline-none focus:border-amber-400"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl mt-2 active:scale-95 transition"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl mt-3 active:scale-95 transition"
                   >
-                    {editingShiftId ? "Salvar Alterações" : "Salvar na Carteira"}
+                    {editingShiftId ? "Salvar Alterações" : "Confirmar & Avançar Moto"}
                   </button>
 
                   {editingShiftId && (
                     <button
                       type="button"
                       onClick={() => handleDeleteShift(editingShiftId)}
-                      className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-bold py-2 rounded-xl text-xs active:scale-95 transition mt-2"
+                      className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-bold py-2 rounded-xl text-xs active:scale-95 transition mt-1"
                     >
                       Excluir Turno
                     </button>
@@ -894,7 +912,129 @@
             </div>
           )}
 
-          {/* MODAL: Gasto Extra (Criar / Editar / Excluir) */}
+          {/* MODAL: LISTA DE METAS */}
+          {isDebtsListModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl max-h-[88vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <div>
+                    <h3 className="font-bold text-base text-white flex items-center gap-2">
+                      <Icon name="list-checks" size={18} className="text-amber-400" /> Metas Cadastradas
+                    </h3>
+                    <p className="text-[11px] text-zinc-400">
+                      {debts.filter(d => d.current >= d.target).length} de {debts.length} quitadas
+                    </p>
+                  </div>
+                  <button onClick={() => setIsDebtsListModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setEditingDebtId(null);
+                    setDebtForm({ name: "", target: "" });
+                    setIsDebtEditModalOpen(true);
+                  }}
+                  className="w-full bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition mb-3"
+                >
+                  <Icon name="plus" size={14} /> Adicionar Nova Meta
+                </button>
+
+                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+                  {debts.map(debt => {
+                    const isPaid = debt.current >= debt.target;
+                    return (
+                      <div
+                        key={debt.id}
+                        className={`p-3 rounded-2xl border transition flex justify-between items-center ${
+                          isPaid ? "bg-emerald-950/20 border-emerald-500/30" : "bg-zinc-950 border-zinc-800"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-xs font-bold ${isPaid ? "text-emerald-400 line-through" : "text-white"}`}>
+                              {debt.name}
+                            </span>
+                            {isPaid && <span className="text-[10px] bg-emerald-500 text-black font-extrabold px-1.5 py-0.2 rounded">Quitado</span>}
+                          </div>
+                          <span className="text-[11px] text-zinc-400">
+                            R$ {debt.current.toFixed(2)} de R$ {debt.target.toFixed(2)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleOpenEditDebt(debt)}
+                            className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                            title="Editar meta"
+                          >
+                            <Icon name="pencil" size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDebt(debt.id)}
+                            className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                            title="Excluir meta"
+                          >
+                            <Icon name="trash-2" size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: CRIAR OU EDITAR META */}
+          {isDebtEditModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">
+                    {editingDebtId ? "Editar Meta" : "Nova Meta"}
+                  </h3>
+                  <button onClick={() => setIsDebtEditModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleSaveDebt} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Nome da Conta / Meta</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Empréstimo do Banco"
+                      value={debtForm.name}
+                      onChange={e => setDebtForm({ ...debtForm, name: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Valor Total (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      placeholder="Ex: 600.00"
+                      value={debtForm.target}
+                      onChange={e => setDebtForm({ ...debtForm, target: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
+                  >
+                    {editingDebtId ? "Salvar Alterações" : "Criar Meta"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: GASTO EXTRA */}
           {isExpenseModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
@@ -958,92 +1098,6 @@
                       Excluir Gasto (Estornar Saldo)
                     </button>
                   )}
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* MODAL: Abater Meta */}
-          {isPayModalOpen && selectedDebt && (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="font-bold text-base text-white">Abater Meta</h3>
-                  <button onClick={() => setIsPayModalOpen(false)} className="text-zinc-400 hover:text-white">
-                    <Icon name="x" size={20} />
-                  </button>
-                </div>
-                <p className="text-xs text-zinc-400 mb-3">
-                  Saldo: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto abater em <strong>{selectedDebt.name}</strong>?
-                </p>
-                <form onSubmit={handlePayDebt} className="space-y-3">
-                  <input
-                    type="number"
-                    step="0.01"
-                    max={wallet}
-                    placeholder={`Máx: R$ ${(selectedDebt.target - selectedDebt.current).toFixed(2)}`}
-                    value={payAmount}
-                    onChange={e => setPayAmount(e.target.value)}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setPayAmount(Math.min(wallet, selectedDebt.target - selectedDebt.current).toString())}
-                    className="bg-zinc-800 hover:bg-zinc-700 text-xs px-2.5 py-1.5 rounded-lg border border-zinc-700 text-zinc-300"
-                  >
-                    Usar Máximo Possível
-                  </button>
-                  <button
-                    type="submit"
-                    className="w-full bg-amber-400 hover:bg-amber-300 text-black font-bold py-2.5 rounded-xl active:scale-95 transition"
-                  >
-                    Confirmar Pagamento
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* MODAL: Nova Meta */}
-          {isNewDebtModalOpen && (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="font-bold text-base text-white">Nova Meta</h3>
-                  <button onClick={() => setIsNewDebtModalOpen(false)} className="text-zinc-400 hover:text-white">
-                    <Icon name="x" size={20} />
-                  </button>
-                </div>
-                <form onSubmit={handleAddDebt} className="space-y-3">
-                  <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Nome da Conta</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Ex: Empréstimo do Banco"
-                      value={newDebtForm.name}
-                      onChange={e => setNewDebtForm({ ...newDebtForm, name: e.target.value })}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Valor Total (R$)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      required
-                      placeholder="Ex: 600.00"
-                      value={newDebtForm.target}
-                      onChange={e => setNewDebtForm({ ...newDebtForm, target: e.target.value })}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition"
-                  >
-                    Inserir na Trilha
-                  </button>
                 </form>
               </div>
             </div>
