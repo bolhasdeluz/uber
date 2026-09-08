@@ -94,7 +94,7 @@
         return saved ? parseFloat(saved) : 800;
       });
 
-      // Navegação da semana (0 = atual, -1 = anterior, etc.) e dia selecionado no gráfico
+      // Navegação da semana e seleção de dia
       const [weekOffset, setWeekOffset] = useState(0);
       const [selectedDayIndex, setSelectedDayIndex] = useState(null);
 
@@ -106,7 +106,8 @@
       const [selectedDebt, setSelectedDebt] = useState(null);
       const [payAmount, setPayAmount] = useState("");
 
-      // Formulários
+      // Estado do formulário de turno (criação e edição)
+      const [editingShiftId, setEditingShiftId] = useState(null);
       const [shiftForm, setShiftForm] = useState({
         date: getTodayLocalDate(),
         income: "",
@@ -132,12 +133,11 @@
         if (window.lucide) window.lucide.createIcons();
       }, [wallet, shifts, expenses, debts, weeklyGoal]);
 
-      // Montagem da Semana Selecionada (Segunda a Domingo)
+      // Montagem da Semana Selecionada
       const weekData = useMemo(() => {
         const now = new Date();
         const currentDay = now.getDay() === 0 ? 7 : now.getDay();
 
-        // Segunda-feira base com offset de semanas
         const monday = new Date(now);
         monday.setDate(now.getDate() - (currentDay - 1) + weekOffset * 7);
         monday.setHours(0, 0, 0, 0);
@@ -167,6 +167,7 @@
             hours,
             km,
             trips,
+            shiftsList: dayShifts,
             hasWork: dayShifts.length > 0
           });
         }
@@ -194,7 +195,6 @@
         };
       }, [shifts, weekOffset]);
 
-      // Totais de Metas / Dívidas
       const debtTotals = useMemo(() => {
         const totalTarget = debts.reduce((acc, d) => acc + d.target, 0);
         const totalPaid = debts.reduce((acc, d) => acc + d.current, 0);
@@ -203,7 +203,6 @@
         return { totalTarget, totalPaid, allCompleted, percent };
       }, [debts]);
 
-      // Estatística em exibição: ou o dia clicado ou o total da semana
       const activeStats = useMemo(() => {
         if (selectedDayIndex !== null && weekData.days[selectedDayIndex]) {
           const d = weekData.days[selectedDayIndex];
@@ -213,6 +212,7 @@
             hours: d.hours,
             trips: d.trips,
             km: d.km,
+            shiftsList: d.shiftsList,
             isSingleDay: true
           };
         }
@@ -222,12 +222,13 @@
           hours: weekData.totalHours,
           trips: weekData.totalTrips,
           km: weekData.totalKm,
+          shiftsList: [],
           isSingleDay: false
         };
       }, [selectedDayIndex, weekData]);
 
-      // Ações
-      const handleAddShift = (e) => {
+      // Salvar Turno
+      const handleSaveShift = (e) => {
         e.preventDefault();
         const income = parseFloat(shiftForm.income) || 0;
         const hours = parseFloat(shiftForm.hours) || 0;
@@ -236,18 +237,33 @@
 
         if (income <= 0) return;
 
-        const newShift = {
-          id: Date.now(),
-          date: shiftForm.date,
-          income,
-          hours,
-          km,
-          trips,
-        };
+        if (editingShiftId) {
+          const oldShift = shifts.find(s => s.id === editingShiftId);
+          const incomeDifference = income - (oldShift ? oldShift.income : 0);
 
-        setShifts([newShift, ...shifts]);
-        setWallet(prev => prev + income);
+          setShifts(prev => prev.map(s => {
+            if (s.id === editingShiftId) {
+              return { ...s, date: shiftForm.date, income, hours, km, trips };
+            }
+            return s;
+          }));
+
+          setWallet(prev => Math.max(0, prev + incomeDifference));
+        } else {
+          const newShift = {
+            id: Date.now(),
+            date: shiftForm.date,
+            income,
+            hours,
+            km,
+            trips,
+          };
+          setShifts([newShift, ...shifts]);
+          setWallet(prev => prev + income);
+        }
+
         setIsShiftModalOpen(false);
+        setEditingShiftId(null);
         setShiftForm({
           date: getTodayLocalDate(),
           income: "",
@@ -255,6 +271,29 @@
           km: "",
           trips: "",
         });
+      };
+
+      const handleOpenEditShift = (shift) => {
+        setEditingShiftId(shift.id);
+        setShiftForm({
+          date: shift.date,
+          income: shift.income.toString(),
+          hours: shift.hours ? shift.hours.toString() : "",
+          km: shift.km ? shift.km.toString() : "",
+          trips: shift.trips ? shift.trips.toString() : "",
+        });
+        setIsShiftModalOpen(true);
+      };
+
+      const handleDeleteShift = (id) => {
+        if (!confirm("Tem certeza que deseja excluir esse lançamento?")) return;
+        const shiftToDelete = shifts.find(s => s.id === id);
+        if (!shiftToDelete) return;
+
+        setShifts(prev => prev.filter(s => s.id !== id));
+        setWallet(prev => Math.max(0, prev - shiftToDelete.income));
+        setIsShiftModalOpen(false);
+        setEditingShiftId(null);
       };
 
       const handleAddExpense = (e) => {
@@ -278,6 +317,7 @@
         });
       };
 
+      // Abater meta livremente selecionada
       const handlePayDebt = (e) => {
         e.preventDefault();
         const amt = parseFloat(payAmount) || 0;
@@ -303,6 +343,11 @@
         setIsPayModalOpen(false);
         setPayAmount("");
         setSelectedDebt(null);
+      };
+
+      const handleDeleteDebt = (id) => {
+        if (!confirm("Deseja remover essa meta da trilha?")) return;
+        setDebts(prev => prev.filter(d => d.id !== id));
       };
 
       const handleAddDebt = (e) => {
@@ -332,7 +377,14 @@
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
-                  setShiftForm(prev => ({ ...prev, date: getTodayLocalDate() }));
+                  setEditingShiftId(null);
+                  setShiftForm({
+                    date: getTodayLocalDate(),
+                    income: "",
+                    hours: "",
+                    km: "",
+                    trips: "",
+                  });
                   setIsShiftModalOpen(true);
                 }}
                 className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs active:scale-95 transition"
@@ -359,12 +411,9 @@
             </div>
           </header>
 
-          {/* ======================================================== */}
-          {/* PAINEL SEMANAL ESTILO UBER COM HISTÓRICO RETROATIVO     */}
-          {/* ======================================================== */}
+          {/* PAINEL SEMANAL ESTILO UBER */}
           <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5 relative">
             
-            {/* Navegador de Semanas */}
             <div className="flex items-center justify-between text-zinc-300 mb-6">
               <button
                 onClick={() => {
@@ -392,7 +441,6 @@
               </button>
             </div>
 
-            {/* Valor em Destaque */}
             <div className="text-center mb-6">
               {selectedDayIndex !== null && (
                 <button
@@ -408,12 +456,10 @@
               <p className="text-xs text-zinc-400 mt-0.5">{activeStats.title}</p>
             </div>
 
-            {/* Linha pontilhada da melhor diária */}
             <div className="text-right text-[11px] text-zinc-400 mb-1 pr-1 font-medium">
               {weekData.maxDailyIncome > 0 && `R$ ${weekData.maxDailyIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
 
-            {/* Gráfico de Barras Estilo Uber */}
             <div className="relative pt-4 pb-2 border-b border-dashed border-zinc-700">
               <div className="h-36 flex items-end justify-between gap-1.5 px-1">
                 {weekData.days.map((day, idx) => {
@@ -443,7 +489,6 @@
               </div>
             </div>
 
-            {/* Dias da semana e números */}
             <div className="flex justify-between items-center text-center mt-3 px-1 text-xs">
               {weekData.days.map((day, idx) => {
                 const isSelected = selectedDayIndex === idx;
@@ -462,9 +507,20 @@
               })}
             </div>
 
-            {/* Sessão de Estatísticas (Online / Viagens / Km) */}
             <div className="mt-8 pt-4 border-t border-zinc-900">
-              <h4 className="text-lg font-bold tracking-tight mb-4">Estatísticas</h4>
+              <div className="flex justify-between items-center mb-4">
+                <h4 className="text-lg font-bold tracking-tight">Estatísticas</h4>
+
+                {activeStats.isSingleDay && activeStats.shiftsList && activeStats.shiftsList.length > 0 && (
+                  <button
+                    onClick={() => handleOpenEditShift(activeStats.shiftsList[0])}
+                    className="text-xs bg-zinc-800 hover:bg-zinc-700 text-sky-400 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition border border-zinc-700"
+                  >
+                    <Icon name="pencil" size={13} />
+                    <span>Editar Lançamento</span>
+                  </button>
+                )}
+              </div>
 
               <div className="grid grid-cols-3 gap-2">
                 <div>
@@ -490,7 +546,7 @@
 
           </section>
 
-          {/* TRILHA DO ASFALTO (DÍVIDAS) */}
+          {/* TRILHA DO ASFALTO (ESCOLHA LIVRE DE METAS) */}
           <section className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
             <div className="flex justify-between items-center mb-6">
               <div>
@@ -498,7 +554,7 @@
                   <Icon name="map-pin" size={18} className="text-amber-400" /> A Trilha da Liberdade
                 </h2>
                 <p className="text-xs text-zinc-400">
-                  {debtTotals.percent}% das dívidas quitadas
+                  {debtTotals.percent}% quitado • Escolha qualquer meta para abater
                 </p>
               </div>
               <button
@@ -509,7 +565,7 @@
               </button>
             </div>
 
-            <div className="relative pl-6 space-y-8 my-4">
+            <div className="relative pl-6 space-y-7 my-4">
               <div className="absolute left-[31px] top-4 bottom-4 w-1 asphalt-line -translate-x-1/2"></div>
 
               {debts.map((debt, index) => {
@@ -518,13 +574,15 @@
 
                 return (
                   <div key={debt.id} className="relative flex items-center gap-4">
+                    
+                    {/* Marcador: Verde para quitado, Amarelo com moto para em andamento, Cinza para aberta */}
                     <div
                       className={`z-10 w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs border-2 shadow-lg transition-all ${
                         isPaid
                           ? "bg-emerald-500 border-emerald-400 text-black shadow-emerald-500/20"
                           : inProgress
-                          ? "bg-amber-400 border-yellow-300 text-black animate-pulse"
-                          : "bg-zinc-900 border-zinc-800 text-zinc-500"
+                          ? "bg-amber-400 border-yellow-300 text-black"
+                          : "bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-amber-400"
                       }`}
                     >
                       {isPaid ? (
@@ -532,40 +590,61 @@
                       ) : inProgress ? (
                         <Icon name="bike" size={18} />
                       ) : (
-                        index + 1
+                        <Icon name="circle-dot" size={16} />
                       )}
                     </div>
 
-                    <div className="flex-1 bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl">
+                    {/* Card da Meta: Todas as não quitadas ficam abertas para pagamento imediato */}
+                    <div className="flex-1 bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl hover:border-zinc-700 transition">
                       <div className="flex justify-between items-start mb-1">
-                        <span className="font-bold text-sm text-zinc-200">{debt.name}</span>
-                        <span className={`text-xs font-semibold ${isPaid ? "text-emerald-400" : "text-zinc-400"}`}>
-                          R$ {debt.current} / {debt.target}
-                        </span>
+                        <div>
+                          <span className="font-bold text-sm text-zinc-200 block">{debt.name}</span>
+                          <span className="text-[10px] text-zinc-400">
+                            Resta: R$ {(debt.target - debt.current).toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-semibold ${isPaid ? "text-emerald-400" : "text-zinc-400"}`}>
+                            R$ {debt.current.toFixed(0)} / {debt.target.toFixed(0)}
+                          </span>
+                          <button
+                            onClick={() => handleDeleteDebt(debt.id)}
+                            className="text-zinc-600 hover:text-rose-400 p-0.5"
+                            title="Remover meta"
+                          >
+                            <Icon name="trash-2" size={13} />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden my-2">
                         <div
-                          className={`h-full ${isPaid ? "bg-emerald-400" : "bg-amber-400"}`}
+                          className={`h-full transition-all duration-300 ${isPaid ? "bg-emerald-400" : "bg-amber-400"}`}
                           style={{ width: `${Math.min(100, (debt.current / debt.target) * 100)}%` }}
                         ></div>
                       </div>
 
-                      {!isPaid && (
+                      {/* Botão de abater disponível em qualquer meta não quitada */}
+                      {!isPaid ? (
                         <button
                           onClick={() => {
                             setSelectedDebt(debt);
                             setIsPayModalOpen(true);
                           }}
                           disabled={wallet <= 0}
-                          className={`w-full text-xs font-bold py-1.5 rounded-lg mt-1 transition ${
+                          className={`w-full text-xs font-bold py-1.5 rounded-lg mt-1 transition flex items-center justify-center gap-1 ${
                             wallet > 0
-                              ? "bg-amber-400 hover:bg-amber-300 text-black shadow"
+                              ? "bg-amber-400 hover:bg-amber-300 text-black shadow active:scale-95"
                               : "bg-zinc-800 text-zinc-600 cursor-not-allowed"
                           }`}
                         >
-                          {wallet > 0 ? "Abater com Saldo" : "Sem saldo disponível"}
+                          <Icon name="coins" size={13} />
+                          <span>{wallet > 0 ? "Pagar com Saldo" : "Sem saldo para abater"}</span>
                         </button>
+                      ) : (
+                        <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 mt-1 justify-center">
+                          <Icon name="check-circle" size={12} /> Meta Paga!
+                        </div>
                       )}
                     </div>
                   </div>
@@ -586,25 +665,26 @@
               <p className="text-xs mt-0.5">
                 {debtTotals.allCompleted
                   ? "🎉 PARABÉNS! Dívidas zeradas! A Trilha da Entrada do Carro está liberada!"
-                  : "🔒 Bloqueado: Quite todas as metas da Fase 1 para destravar a rota do carro."}
+                  : "🔒 Bloqueado: Quite todas as metas cadastradas para destravar a rota da entrada do carro."}
               </p>
             </div>
           </section>
 
-          {/* MODAL: Registrar Turno */}
+          {/* MODAL: Registrar / Editar Turno */}
           {isShiftModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="font-bold text-base text-white flex items-center gap-2">
-                    <Icon name="bike" size={18} className="text-amber-400" /> Registrar Turno
+                    <Icon name="bike" size={18} className="text-amber-400" />
+                    {editingShiftId ? "Editar Turno" : "Registrar Turno"}
                   </h3>
                   <button onClick={() => setIsShiftModalOpen(false)} className="text-zinc-400 hover:text-white">
                     <Icon name="x" size={20} />
                   </button>
                 </div>
 
-                <form onSubmit={handleAddShift} className="space-y-3">
+                <form onSubmit={handleSaveShift} className="space-y-3">
                   <div>
                     <label className="text-[11px] text-zinc-400 block mb-1">Data do Turno</label>
                     <input
@@ -634,7 +714,7 @@
                       <label className="text-[11px] text-zinc-400 block mb-1">Horas na Pista</label>
                       <input
                         type="number"
-                        step="0.1"
+                        step="0.01"
                         placeholder="Ex: 6.5"
                         value={shiftForm.hours}
                         onChange={e => setShiftForm({ ...shiftForm, hours: e.target.value })}
@@ -669,8 +749,18 @@
                     type="submit"
                     className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl mt-2 active:scale-95 transition"
                   >
-                    Salvar na Carteira
+                    {editingShiftId ? "Salvar Alterações" : "Salvar na Carteira"}
                   </button>
+
+                  {editingShiftId && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteShift(editingShiftId)}
+                      className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-bold py-2 rounded-xl text-xs active:scale-95 transition mt-2"
+                    >
+                      Excluir Lançamento
+                    </button>
+                  )}
                 </form>
               </div>
             </div>
@@ -733,7 +823,7 @@
             </div>
           )}
 
-          {/* MODAL: Abater Meta */}
+          {/* MODAL: Abater Meta Livre */}
           {isPayModalOpen && selectedDebt && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
@@ -744,14 +834,14 @@
                   </button>
                 </div>
                 <p className="text-xs text-zinc-400 mb-3">
-                  Saldo: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto abater em <strong>{selectedDebt.name}</strong>?
+                  Saldo: <strong>R$ {wallet.toFixed(2)}</strong>. Quanto quer abater em <strong>{selectedDebt.name}</strong>?
                 </p>
                 <form onSubmit={handlePayDebt} className="space-y-3">
                   <input
                     type="number"
                     step="0.01"
                     max={wallet}
-                    placeholder={`Máx: R$ ${Math.min(wallet, selectedDebt.target - selectedDebt.current)}`}
+                    placeholder={`Máx: R$ ${(selectedDebt.target - selectedDebt.current).toFixed(2)}`}
                     value={payAmount}
                     onChange={e => setPayAmount(e.target.value)}
                     className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
