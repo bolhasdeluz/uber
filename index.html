@@ -171,6 +171,11 @@
         return old ? JSON.parse(old) : initialDebtsList;
       });
 
+      const [groups, setGroups] = useState(() => {
+        const saved = localStorage.getItem("rota_groups_master");
+        return saved ? JSON.parse(saved) : [];
+      });
+
       const [weeklyGoal, setWeeklyGoal] = useState(() => {
         const saved = localStorage.getItem("rota_goal");
         return saved ? parseFloat(saved) : 800;
@@ -184,11 +189,14 @@
       const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
       const [isDebtsListModalOpen, setIsDebtsListModalOpen] = useState(false);
       const [isDebtEditModalOpen, setIsDebtEditModalOpen] = useState(false);
+      const [isGroupsModalOpen, setIsGroupsModalOpen] = useState(false);
 
       // Edições
       const [editingShiftId, setEditingShiftId] = useState(null);
       const [editingExpenseId, setEditingExpenseId] = useState(null);
       const [editingDebtId, setEditingDebtId] = useState(null);
+      const [editingGroupId, setEditingGroupId] = useState(null);
+      const [collapsedGroups, setCollapsedGroups] = useState({});
 
       const [shiftForm, setShiftForm] = useState({
         date: getTodayLocalDate(),
@@ -200,16 +208,18 @@
 
       const [allocations, setAllocations] = useState({});
       const [expenseForm, setExpenseForm] = useState({ amount: "", description: "", date: getTodayLocalDate() });
-      const [debtForm, setDebtForm] = useState({ name: "", target: "" });
+      const [debtForm, setDebtForm] = useState({ name: "", target: "", groupId: "" });
+      const [groupForm, setGroupForm] = useState({ name: "" });
 
       useEffect(() => {
         localStorage.setItem("rota_wallet_master", JSON.stringify(wallet));
         localStorage.setItem("rota_shifts_master", JSON.stringify(shifts));
         localStorage.setItem("rota_expenses_master", JSON.stringify(expenses));
         localStorage.setItem("rota_debts_master", JSON.stringify(debts));
+        localStorage.setItem("rota_groups_master", JSON.stringify(groups));
         localStorage.setItem("rota_goal", weeklyGoal.toString());
         if (window.lucide) window.lucide.createIcons();
-      }, [wallet, shifts, expenses, debts, weeklyGoal]);
+      }, [wallet, shifts, expenses, debts, groups, weeklyGoal]);
 
       // Métricas da Semana (Painel Uber + Meta de 800)
       const weekData = useMemo(() => {
@@ -297,6 +307,56 @@
         const totalRemaining = Math.max(0, totalTarget - totalPaid);
         return { totalTarget, totalPaid, totalRemaining, allCompleted, percent };
       }, [debts]);
+
+      // Metas organizadas por Grupo (metas menores dentro de cada grupo)
+      const debtGroupsView = useMemo(() => {
+        const knownGroupIds = new Set(groups.map(g => g.id));
+        const sortDebts = (list) =>
+          [...list].sort((a, b) => {
+            const aDone = a.current >= a.target;
+            const bDone = b.current >= b.target;
+            if (aDone !== bDone) return aDone ? 1 : -1;
+            return 0;
+          });
+
+        const buildSection = (base, groupDebts) => {
+          const target = groupDebts.reduce((acc, d) => acc + d.target, 0);
+          const paid = groupDebts.reduce((acc, d) => acc + Math.min(d.current, d.target), 0);
+          const percent = target > 0 ? Math.min(100, Math.round((paid / target) * 100)) : 0;
+          const completedCount = groupDebts.filter(d => d.current >= d.target).length;
+          return { ...base, debts: groupDebts, target, paid, percent, completedCount };
+        };
+
+        const sections = groups.map(g => buildSection(g, sortDebts(debts.filter(d => d.groupId === g.id))));
+
+        const ungrouped = sortDebts(debts.filter(d => !knownGroupIds.has(d.groupId)));
+        if (ungrouped.length > 0) {
+          sections.push(buildSection({ id: "ungrouped", name: "Sem Grupo", isUngrouped: true }, ungrouped));
+        }
+
+        return sections;
+      }, [groups, debts]);
+
+      // Metas pendentes (para pagar no turno) organizadas por Grupo
+      const payableDebtsGrouped = useMemo(() => {
+        const payable = debts.filter(
+          d => d.current < d.target || (editingShiftId && shiftForm.allocations && shiftForm.allocations[d.id])
+        );
+        const knownGroupIds = new Set(groups.map(g => g.id));
+        const sections = groups
+          .map(g => ({ ...g, debts: payable.filter(d => d.groupId === g.id) }))
+          .filter(s => s.debts.length > 0);
+
+        const ungrouped = payable.filter(d => !knownGroupIds.has(d.groupId));
+        if (ungrouped.length > 0) {
+          sections.push({ id: "ungrouped", name: "Sem Grupo", debts: ungrouped, isUngrouped: true });
+        }
+        return sections;
+      }, [debts, groups, editingShiftId, shiftForm.allocations]);
+
+      const toggleGroupCollapse = (id) => {
+        setCollapsedGroups(prev => ({ ...prev, [id]: !prev[id] }));
+      };
 
       const activeStats = useMemo(() => {
         if (selectedDayIndex !== null && weekData.days[selectedDayIndex]) {
@@ -492,21 +552,26 @@
         e.preventDefault();
         const target = parseFloat(debtForm.target) || 0;
         if (!debtForm.name || target <= 0) return;
+        const groupId = debtForm.groupId ? parseInt(debtForm.groupId) : null;
 
         if (editingDebtId) {
-          setDebts(prev => prev.map(d => (d.id === editingDebtId ? { ...d, name: debtForm.name, target } : d)));
+          setDebts(prev => prev.map(d => (d.id === editingDebtId ? { ...d, name: debtForm.name, target, groupId } : d)));
         } else {
-          setDebts([...debts, { id: Date.now(), name: debtForm.name, target, current: 0 }]);
+          setDebts([...debts, { id: Date.now(), name: debtForm.name, target, current: 0, groupId }]);
         }
 
-        setDebtForm({ name: "", target: "" });
+        setDebtForm({ name: "", target: "", groupId: "" });
         setEditingDebtId(null);
         setIsDebtEditModalOpen(false);
       };
 
       const handleOpenEditDebt = (debt) => {
         setEditingDebtId(debt.id);
-        setDebtForm({ name: debt.name, target: debt.target.toString() });
+        setDebtForm({
+          name: debt.name,
+          target: debt.target.toString(),
+          groupId: debt.groupId != null ? debt.groupId.toString() : "",
+        });
         setIsDebtEditModalOpen(true);
       };
 
@@ -519,6 +584,49 @@
       const handleResetDebtPayment = (id) => {
         if (!confirm("Deseja zerar o valor pago desta conta?")) return;
         setDebts(prev => prev.map(d => (d.id === id ? { ...d, current: 0 } : d)));
+      };
+
+      // Grupos (metas menores)
+      const handleSaveGroup = (e) => {
+        e.preventDefault();
+        const name = groupForm.name.trim();
+        if (!name) return;
+
+        if (editingGroupId) {
+          setGroups(prev => prev.map(g => (g.id === editingGroupId ? { ...g, name } : g)));
+        } else {
+          setGroups(prev => [...prev, { id: Date.now(), name }]);
+        }
+
+        setGroupForm({ name: "" });
+        setEditingGroupId(null);
+      };
+
+      const handleOpenEditGroup = (group) => {
+        setEditingGroupId(group.id);
+        setGroupForm({ name: group.name });
+      };
+
+      const handleCancelEditGroup = () => {
+        setEditingGroupId(null);
+        setGroupForm({ name: "" });
+      };
+
+      const handleDeleteGroup = (id) => {
+        if (!confirm("Excluir este grupo? As metas dele voltam a ficar sem grupo.")) return;
+        setGroups(prev => prev.filter(g => g.id !== id));
+        if (editingGroupId === id) handleCancelEditGroup();
+      };
+
+      const handleMoveGroup = (id, direction) => {
+        setGroups(prev => {
+          const idx = prev.findIndex(g => g.id === id);
+          const newIdx = idx + direction;
+          if (idx < 0 || newIdx < 0 || newIdx >= prev.length) return prev;
+          const copy = [...prev];
+          [copy[idx], copy[newIdx]] = [copy[newIdx], copy[idx]];
+          return copy;
+        });
       };
 
       return (
@@ -945,28 +1053,37 @@
                       Digite quanto deste faturamento você quer abater em cada conta hoje:
                     </p>
 
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                      {debts.filter(d => d.current < d.target || (editingShiftId && shiftForm.allocations && shiftForm.allocations[d.id])).map(debt => {
-                        const remaining = debt.target - debt.current;
-                        return (
-                          <div key={debt.id} className="bg-zinc-800/70 border border-zinc-700/60 p-2 rounded-xl flex items-center justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <span className="text-xs font-bold text-zinc-200 block truncate">{debt.name}</span>
-                              <span className="text-[10px] text-zinc-400">Resta: R$ {remaining.toFixed(2)}</span>
-                            </div>
-                            <div className="w-24">
-                              <input
-                                type="number"
-                                step="0.01"
-                                placeholder="R$ 0,00"
-                                value={allocations[debt.id] || ""}
-                                onChange={e => setAllocations({ ...allocations, [debt.id]: e.target.value })}
-                                className="w-full bg-zinc-900 border border-zinc-600 rounded-lg px-2 py-1 text-xs text-white text-right focus:outline-none focus:border-amber-400"
-                              />
-                            </div>
+                    <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
+                      {payableDebtsGrouped.map(section => (
+                        <div key={section.id}>
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1.5">
+                            {section.name}
+                          </span>
+                          <div className="space-y-2">
+                            {section.debts.map(debt => {
+                              const remaining = debt.target - debt.current;
+                              return (
+                                <div key={debt.id} className="bg-zinc-800/70 border border-zinc-700/60 p-2 rounded-xl flex items-center justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <span className="text-xs font-bold text-zinc-200 block truncate">{debt.name}</span>
+                                    <span className="text-[10px] text-zinc-400">Resta: R$ {remaining.toFixed(2)}</span>
+                                  </div>
+                                  <div className="w-24">
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder="R$ 0,00"
+                                      value={allocations[debt.id] || ""}
+                                      onChange={e => setAllocations({ ...allocations, [debt.id]: e.target.value })}
+                                      className="w-full bg-zinc-900 border border-zinc-600 rounded-lg px-2 py-1 text-xs text-white text-right focus:outline-none focus:border-amber-400"
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -1009,67 +1126,214 @@
                   </button>
                 </div>
 
-                <button
-                  onClick={() => {
-                    setEditingDebtId(null);
-                    setDebtForm({ name: "", target: "" });
-                    setIsDebtEditModalOpen(true);
-                  }}
-                  className="w-full bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition mb-3"
-                >
-                  <Icon name="plus" size={14} /> Adicionar Nova Meta
-                </button>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <button
+                    onClick={() => {
+                      setEditingDebtId(null);
+                      setDebtForm({ name: "", target: "", groupId: groups[0] ? groups[0].id.toString() : "" });
+                      setIsDebtEditModalOpen(true);
+                    }}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Icon name="plus" size={14} /> Nova Meta
+                  </button>
+                  <button
+                    onClick={() => setIsGroupsModalOpen(true)}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-sky-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Icon name="layers" size={14} /> Grupos
+                  </button>
+                </div>
 
-                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
-                  {debts.map(debt => {
-                    const isPaid = debt.current >= debt.target;
+                <div className="space-y-4 overflow-y-auto pr-1 flex-1">
+                  {debtGroupsView.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-6">Nenhuma meta cadastrada ainda.</p>
+                  )}
+                  {debtGroupsView.map(section => {
+                    const isCollapsed = !!collapsedGroups[section.id];
+                    const isSectionDone = section.debts.length > 0 && section.completedCount === section.debts.length;
                     return (
-                      <div
-                        key={debt.id}
-                        className={`p-3 rounded-2xl border transition flex justify-between items-center ${
-                          isPaid ? "bg-emerald-950/20 border-emerald-500/30" : "bg-zinc-950 border-zinc-800"
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className={`text-xs font-bold ${isPaid ? "text-emerald-400 line-through" : "text-white"}`}>
-                              {debt.name}
+                      <div key={section.id} className="space-y-2">
+                        <button
+                          onClick={() => toggleGroupCollapse(section.id)}
+                          className="w-full flex items-center justify-between gap-2 bg-zinc-900/70 border border-zinc-800 rounded-xl px-3 py-2"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} size={14} className="text-zinc-500 shrink-0" />
+                            <span className={`text-xs font-bold truncate ${section.isUngrouped ? "text-zinc-400" : "text-white"}`}>
+                              {section.name}
                             </span>
-                            {isPaid && <span className="text-[10px] bg-emerald-500 text-black font-extrabold px-1.5 py-0.2 rounded">Quitado</span>}
+                            {isSectionDone && (
+                              <span className="text-[9px] bg-emerald-500 text-black font-extrabold px-1.5 py-0.2 rounded shrink-0">Concluído</span>
+                            )}
                           </div>
-                          <span className="text-[11px] text-zinc-400">
-                            R$ {debt.current.toFixed(2)} de R$ {debt.target.toFixed(2)}
+                          <span className="text-[10px] text-zinc-400 shrink-0">
+                            {section.completedCount}/{section.debts.length} • {section.percent}%
                           </span>
-                        </div>
+                        </button>
 
-                        <div className="flex items-center gap-1">
-                          {debt.current > 0 && (
-                            <button
-                              onClick={() => handleResetDebtPayment(debt.id)}
-                              className="p-1.5 text-zinc-500 hover:text-amber-400 transition"
-                              title="Zerar valor pago desta conta"
-                            >
-                              <Icon name="rotate-ccw" size={14} />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleOpenEditDebt(debt)}
-                            className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
-                            title="Editar meta"
-                          >
-                            <Icon name="pencil" size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteDebt(debt.id)}
-                            className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
-                            title="Excluir meta"
-                          >
-                            <Icon name="trash-2" size={14} />
-                          </button>
-                        </div>
+                        {!isCollapsed && (
+                          <div className="space-y-2 pl-1">
+                            <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-500"
+                                style={{ width: `${section.percent}%` }}
+                              ></div>
+                            </div>
+                            {section.debts.map(debt => {
+                              const isPaid = debt.current >= debt.target;
+                              return (
+                                <div
+                                  key={debt.id}
+                                  className={`p-3 rounded-2xl border transition flex justify-between items-center ${
+                                    isPaid ? "bg-emerald-950/20 border-emerald-500/30" : "bg-zinc-950 border-zinc-800"
+                                  }`}
+                                >
+                                  <div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`text-xs font-bold ${isPaid ? "text-emerald-400 line-through" : "text-white"}`}>
+                                        {debt.name}
+                                      </span>
+                                      {isPaid && <span className="text-[10px] bg-emerald-500 text-black font-extrabold px-1.5 py-0.2 rounded">Quitado</span>}
+                                    </div>
+                                    <span className="text-[11px] text-zinc-400">
+                                      R$ {debt.current.toFixed(2)} de R$ {debt.target.toFixed(2)}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    {debt.current > 0 && (
+                                      <button
+                                        onClick={() => handleResetDebtPayment(debt.id)}
+                                        className="p-1.5 text-zinc-500 hover:text-amber-400 transition"
+                                        title="Zerar valor pago desta conta"
+                                      >
+                                        <Icon name="rotate-ccw" size={14} />
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleOpenEditDebt(debt)}
+                                      className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                                      title="Editar meta"
+                                    >
+                                      <Icon name="pencil" size={14} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteDebt(debt.id)}
+                                      className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                                      title="Excluir meta"
+                                    >
+                                      <Icon name="trash-2" size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: GRUPOS DE METAS */}
+          {isGroupsModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl max-h-[85vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="layers" size={18} className="text-sky-400" /> Grupos de Metas
+                  </h3>
+                  <button
+                    onClick={() => { setIsGroupsModalOpen(false); handleCancelEditGroup(); }}
+                    className="text-zinc-400 hover:text-white"
+                  >
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 mb-3">
+                  Separe as metas em grupos menores. A ordem define a sequência: complete um grupo e siga para o próximo.
+                </p>
+
+                <form onSubmit={handleSaveGroup} className="flex items-center gap-2 mb-3">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Nome do grupo"
+                    value={groupForm.name}
+                    onChange={e => setGroupForm({ name: e.target.value })}
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-400"
+                  />
+                  <button
+                    type="submit"
+                    className="bg-sky-500 hover:bg-sky-600 text-black font-bold p-2.5 rounded-xl active:scale-95 transition shrink-0"
+                    title={editingGroupId ? "Salvar" : "Adicionar"}
+                  >
+                    <Icon name={editingGroupId ? "check" : "plus"} size={16} />
+                  </button>
+                  {editingGroupId && (
+                    <button
+                      type="button"
+                      onClick={handleCancelEditGroup}
+                      className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 p-2.5 rounded-xl active:scale-95 transition shrink-0"
+                      title="Cancelar"
+                    >
+                      <Icon name="x" size={16} />
+                    </button>
+                  )}
+                </form>
+
+                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+                  {groups.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-4">Nenhum grupo criado ainda.</p>
+                  )}
+                  {groups.map((group, idx) => (
+                    <div
+                      key={group.id}
+                      className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleMoveGroup(group.id, -1)}
+                          disabled={idx === 0}
+                          className="p-1 text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500 transition"
+                          title="Mover para cima"
+                        >
+                          <Icon name="chevron-up" size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleMoveGroup(group.id, 1)}
+                          disabled={idx === groups.length - 1}
+                          className="p-1 text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500 transition"
+                          title="Mover para baixo"
+                        >
+                          <Icon name="chevron-down" size={14} />
+                        </button>
+                      </div>
+                      <span className="text-xs font-bold text-white flex-1 truncate">{group.name}</span>
+                      <span className="text-[10px] text-zinc-500 shrink-0">
+                        {debts.filter(d => d.groupId === group.id).length} metas
+                      </span>
+                      <button
+                        onClick={() => handleOpenEditGroup(group)}
+                        className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                        title="Editar grupo"
+                      >
+                        <Icon name="pencil" size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteGroup(group.id)}
+                        className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                        title="Excluir grupo"
+                      >
+                        <Icon name="trash-2" size={14} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1110,6 +1374,19 @@
                       onChange={e => setDebtForm({ ...debtForm, target: e.target.value })}
                       className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                     />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Grupo</label>
+                    <select
+                      value={debtForm.groupId}
+                      onChange={e => setDebtForm({ ...debtForm, groupId: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
+                    >
+                      <option value="">Sem Grupo</option>
+                      {groups.map(g => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
                   </div>
                   <button
                     type="submit"
