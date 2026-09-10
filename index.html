@@ -87,38 +87,45 @@
       { id: 1012, date: "2026-08-30", income: 144.43, hours: 5.650, km: 0, trips: 12, allocations: {} },
     ];
 
+    const initialGroupsList = [
+      { id: 900001, name: "Casa" },
+      { id: 900002, name: "Terreiro" },
+      { id: 900003, name: "Dívidas" },
+    ];
+
     const initialDebtsList = [
-      { id: 101, name: "Luz (Terreiro)", target: 285.00, current: 0 },
-      { id: 102, name: "Água (Terreiro)", target: 120.00, current: 0 },
-      { id: 103, name: "Claro (Terreiro)", target: 240.00, current: 0 },
-      { id: 104, name: "Alarme (Terreiro)", target: 400.00, current: 0 },
-      { id: 105, name: "Aluguel (Terreiro)", target: 1000.00, current: 0 },
-      { id: 106, name: "Fernanda", target: 1200.00, current: 0 },
-      { id: 107, name: "Tassiana", target: 760.00, current: 0 },
-      { id: 108, name: "Everson", target: 1200.00, current: 0 },
-      { id: 109, name: "Facio", target: 497.84, current: 0 },
-      { id: 110, name: "Bitpay / Bepay", target: 232.98, current: 0 },
-      { id: 111, name: "iFood", target: 380.49, current: 0 },
-      { id: 112, name: "Infinity", target: 353.73, current: 0 },
-      { id: 113, name: "Inter", target: 300.49, current: 0 },
-      { id: 201, name: "Luz (Casa)", target: 380.00, current: 0 },
-      { id: 202, name: "Gás (Casa)", target: 200.00, current: 0 },
-      { id: 203, name: "Claro (Casa)", target: 155.00, current: 0 },
-      { id: 204, name: "Vivo", target: 190.00, current: 0 },
-      { id: 205, name: "Psico", target: 450.00, current: 0 },
-      { id: 206, name: "Psiq", target: 150.00, current: 0 },
-      { id: 207, name: "Ração", target: 330.00, current: 0 },
-      { id: 208, name: "Petlove", target: 460.00, current: 0 },
-      { id: 209, name: "Unha", target: 160.00, current: 0 },
-      { id: 210, name: "Murilo / Muilo", target: 120.00, current: 0 },
-      { id: 211, name: "Cloud", target: 67.00, current: 0 },
-      { id: 212, name: "Claude", target: 110.00, current: 0 },
-      { id: 213, name: "BB", target: 57.00, current: 0 },
-      { id: 214, name: "Delicato", target: 400.00, current: 0 },
-      { id: 215, name: "Gympass", target: 350.00, current: 0 },
-      { id: 216, name: "Gabriella / Gabrilla", target: 426.00, current: 0 },
-      { id: 217, name: "Stephanie", target: 500.00, current: 0 },
-      { id: 218, name: "Ferragem", target: 353.00, current: 0 },
+      // Terreiro
+      { id: 101, name: "Luz", target: 95.00, current: 0, groupId: 900002 },
+      { id: 102, name: "Água", target: 40.00, current: 0, groupId: 900002 },
+      { id: 103, name: "Internet", target: 130.00, current: 0, groupId: 900002 },
+      { id: 104, name: "Alarme", target: 200.00, current: 0, groupId: 900002 },
+      { id: 105, name: "Aluguel", target: 1000.00, current: 0, groupId: 900002 },
+      { id: 106, name: "Fernanda", target: 200.00, current: 0, groupId: 900002 },
+      { id: 107, name: "Tassiana", target: 190.00, current: 0, groupId: 900002 },
+      { id: 108, name: "Everson", target: 300.00, current: 0, groupId: 900002 },
+      // Dívidas
+      { id: 109, name: "Facio", target: 497.84, current: 0, groupId: 900003 },
+      { id: 110, name: "Blipay", target: 232.98, current: 0, groupId: 900003 },
+      { id: 111, name: "iFood", target: 380.49, current: 0, groupId: 900003 },
+      { id: 112, name: "Infinity", target: 353.43, current: 0, groupId: 900003 },
+      { id: 113, name: "Inter", target: 300.49, current: 0, groupId: 900003 },
+      // Casa
+      { id: 201, name: "Luz", target: 380.00, current: 0, groupId: 900001 },
+      { id: 202, name: "Gás", target: 200.00, current: 0, groupId: 900001 },
+      { id: 203, name: "Internet (Claro)", target: 155.00, current: 0, groupId: 900001 },
+      { id: 204, name: "Vivo", target: 190.00, current: 0, groupId: 900001 },
+      { id: 205, name: "Psico", target: 250.00, current: 0, groupId: 900001 },
+      { id: 206, name: "Psiquiatra", target: 250.00, current: 0, groupId: 900001 },
+      { id: 207, name: "Ração/Bagão", target: 330.00, current: 0, groupId: 900001 },
+      { id: 208, name: "Petlove", target: 230.00, current: 0, groupId: 900001 },
+      { id: 209, name: "Unha", target: 160.00, current: 0, groupId: 900001 },
+      { id: 210, name: "Murilo", target: 60.00, current: 0, groupId: 900001 },
+      { id: 211, name: "iCloud", target: 67.00, current: 0, groupId: 900001 },
+      { id: 212, name: "Claude", target: 110.00, current: 0, groupId: 900001 },
+      { id: 213, name: "BB", target: 57.00, current: 0, groupId: 900001 },
+      { id: 216, name: "Gabriela", target: 426.00, current: 0, groupId: 900001 },
+      { id: 217, name: "Stephanie", target: 250.00, current: 0, groupId: 900001 },
+      { id: 218, name: "Ferragem", target: 353.00, current: 0, groupId: 900001 },
     ];
 
     const recoverAllShifts = () => {
@@ -173,7 +180,7 @@
 
       const [groups, setGroups] = useState(() => {
         const saved = localStorage.getItem("rota_groups_master");
-        return saved ? JSON.parse(saved) : [];
+        return saved ? JSON.parse(saved) : initialGroupsList;
       });
 
       const [weeklyGoal, setWeeklyGoal] = useState(() => {
@@ -224,6 +231,81 @@
         localStorage.setItem("rota_goal", weeklyGoal.toString());
         if (window.lucide) window.lucide.createIcons();
       }, [wallet, shifts, expenses, debts, groups, weeklyGoal]);
+
+      // Correção pontual: restaura/atualiza a lista completa de metas (Casa, Terreiro, Dívidas)
+      // com os valores corretos, sem apagar o que já foi pago nem duplicar metas existentes.
+      useEffect(() => {
+        const MIGRATION_KEY = "rota_metas_restore_2026_09";
+        if (localStorage.getItem(MIGRATION_KEY)) return;
+        localStorage.setItem(MIGRATION_KEY, "1");
+
+        const groupDefs = [
+          { name: "Casa", fallbackId: 900001 },
+          { name: "Terreiro", fallbackId: 900002 },
+          { name: "Dívidas", fallbackId: 900003 },
+        ];
+        const resolvedGroupIds = {};
+        groupDefs.forEach(gd => {
+          const existing = groups.find(g => g.name.trim().toLowerCase() === gd.name.toLowerCase());
+          resolvedGroupIds[gd.name] = existing ? existing.id : gd.fallbackId;
+        });
+
+        setGroups(prev => {
+          const next = [...prev];
+          groupDefs.forEach(gd => {
+            if (!next.some(g => g.id === resolvedGroupIds[gd.name])) {
+              next.push({ id: resolvedGroupIds[gd.name], name: gd.name });
+            }
+          });
+          return next;
+        });
+
+        const canonicalDebts = [
+          { id: 101, name: "Luz", target: 95.00, group: "Terreiro" },
+          { id: 102, name: "Água", target: 40.00, group: "Terreiro" },
+          { id: 103, name: "Internet", target: 130.00, group: "Terreiro" },
+          { id: 104, name: "Alarme", target: 200.00, group: "Terreiro" },
+          { id: 105, name: "Aluguel", target: 1000.00, group: "Terreiro" },
+          { id: 106, name: "Fernanda", target: 200.00, group: "Terreiro" },
+          { id: 107, name: "Tassiana", target: 190.00, group: "Terreiro" },
+          { id: 108, name: "Everson", target: 300.00, group: "Terreiro" },
+          { id: 109, name: "Facio", target: 497.84, group: "Dívidas" },
+          { id: 110, name: "Blipay", target: 232.98, group: "Dívidas" },
+          { id: 111, name: "iFood", target: 380.49, group: "Dívidas" },
+          { id: 112, name: "Infinity", target: 353.43, group: "Dívidas" },
+          { id: 113, name: "Inter", target: 300.49, group: "Dívidas" },
+          { id: 201, name: "Luz", target: 380.00, group: "Casa" },
+          { id: 202, name: "Gás", target: 200.00, group: "Casa" },
+          { id: 203, name: "Internet (Claro)", target: 155.00, group: "Casa" },
+          { id: 204, name: "Vivo", target: 190.00, group: "Casa" },
+          { id: 205, name: "Psico", target: 250.00, group: "Casa" },
+          { id: 206, name: "Psiquiatra", target: 250.00, group: "Casa" },
+          { id: 207, name: "Ração/Bagão", target: 330.00, group: "Casa" },
+          { id: 208, name: "Petlove", target: 230.00, group: "Casa" },
+          { id: 209, name: "Unha", target: 160.00, group: "Casa" },
+          { id: 210, name: "Murilo", target: 60.00, group: "Casa" },
+          { id: 211, name: "iCloud", target: 67.00, group: "Casa" },
+          { id: 212, name: "Claude", target: 110.00, group: "Casa" },
+          { id: 213, name: "BB", target: 57.00, group: "Casa" },
+          { id: 216, name: "Gabriela", target: 426.00, group: "Casa" },
+          { id: 217, name: "Stephanie", target: 250.00, group: "Casa" },
+          { id: 218, name: "Ferragem", target: 353.00, group: "Casa" },
+        ];
+
+        setDebts(prev => {
+          const next = [...prev];
+          canonicalDebts.forEach(item => {
+            const idx = next.findIndex(d => d.id === item.id);
+            const groupId = resolvedGroupIds[item.group];
+            if (idx >= 0) {
+              next[idx] = { ...next[idx], name: item.name, target: item.target, groupId, deletedAt: null };
+            } else {
+              next.push({ id: item.id, name: item.name, target: item.target, current: 0, groupId, deletedAt: null });
+            }
+          });
+          return next;
+        });
+      }, []);
 
       // Métricas da Semana (Painel Uber + Meta de 800)
       const weekData = useMemo(() => {
