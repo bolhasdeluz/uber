@@ -191,6 +191,8 @@
       const [isDebtEditModalOpen, setIsDebtEditModalOpen] = useState(false);
       const [isGroupsModalOpen, setIsGroupsModalOpen] = useState(false);
       const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+      const [isWalletEditModalOpen, setIsWalletEditModalOpen] = useState(false);
+      const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
 
       // Edições
       const [editingShiftId, setEditingShiftId] = useState(null);
@@ -211,6 +213,7 @@
       const [expenseForm, setExpenseForm] = useState({ amount: "", description: "", date: getTodayLocalDate() });
       const [debtForm, setDebtForm] = useState({ name: "", target: "", groupId: "" });
       const [groupForm, setGroupForm] = useState({ name: "" });
+      const [walletEditValue, setWalletEditValue] = useState("");
 
       useEffect(() => {
         localStorage.setItem("rota_wallet_master", JSON.stringify(wallet));
@@ -426,9 +429,14 @@
             })
           );
 
+          let oldTotalAllocated = 0;
+          Object.values(oldAllocations).forEach(val => {
+            oldTotalAllocated += parseFloat(val) || 0;
+          });
+
           const diffIncome = income - (oldShift ? oldShift.income : 0);
           setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, income, hours, km, trips, allocations } : s)));
-          setWallet(prev => Math.max(0, prev + diffIncome - totalAllocated));
+          setWallet(prev => Math.max(0, prev + diffIncome - totalAllocated + oldTotalAllocated));
         } else {
           if (totalAllocated > 0) {
             setDebts(prev =>
@@ -651,6 +659,47 @@
         });
       };
 
+      // Ajuste manual do saldo da carteira
+      const handleSaveWalletEdit = (e) => {
+        e.preventDefault();
+        const value = parseFloat(walletEditValue);
+        if (isNaN(value) || value < 0) return;
+        setWallet(value);
+        setIsWalletEditModalOpen(false);
+      };
+
+      // Total ganho por mês, para o Dashboard Mensal
+      const monthlyTotals = useMemo(() => {
+        const map = {};
+        shifts.forEach(s => {
+          const monthKey = s.date.slice(0, 7);
+          if (!map[monthKey]) map[monthKey] = { income: 0, hours: 0, km: 0, trips: 0, count: 0 };
+          map[monthKey].income += s.income;
+          map[monthKey].hours += s.hours;
+          map[monthKey].km += s.km;
+          map[monthKey].trips += s.trips;
+          map[monthKey].count += 1;
+        });
+
+        const monthFullNames = [
+          "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+          "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+        ];
+        const maxIncome = Math.max(...Object.values(map).map(v => v.income), 0);
+
+        return Object.entries(map)
+          .map(([key, vals]) => {
+            const [year, month] = key.split("-").map(Number);
+            return {
+              key,
+              label: `${monthFullNames[month - 1]} de ${year}`,
+              maxIncome,
+              ...vals
+            };
+          })
+          .sort((a, b) => b.key.localeCompare(a.key));
+      }, [shifts]);
+
       return (
         <div className="max-w-md mx-auto min-h-screen bg-black text-white p-4 space-y-6">
           
@@ -659,10 +708,30 @@
             <div className="flex justify-between items-center mb-3">
               <div>
                 <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">Saldo na Carteira</span>
-                <div className="text-2xl font-extrabold text-amber-400">
-                  R$ {wallet.toFixed(2)}
+                <div className="flex items-center gap-2">
+                  <div className="text-2xl font-extrabold text-amber-400">
+                    R$ {wallet.toFixed(2)}
+                  </div>
+                  <button
+                    onClick={() => {
+                      setWalletEditValue(wallet.toFixed(2));
+                      setIsWalletEditModalOpen(true);
+                    }}
+                    className="text-zinc-500 hover:text-sky-400 p-1 transition"
+                    title="Ajustar saldo da carteira"
+                  >
+                    <Icon name="pencil" size={14} />
+                  </button>
                 </div>
               </div>
+
+              <button
+                onClick={() => setIsMonthlyModalOpen(true)}
+                className="text-xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-xl border border-zinc-700/80 flex items-center gap-1.5 transition active:scale-95"
+              >
+                <Icon name="bar-chart-3" size={14} className="text-amber-400" />
+                <span>Por Mês</span>
+              </button>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -1561,6 +1630,104 @@
                     </button>
                   )}
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: AJUSTAR SALDO DA CARTEIRA */}
+          {isWalletEditModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">Ajustar Saldo da Carteira</h3>
+                  <button onClick={() => setIsWalletEditModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <p className="text-[11px] text-zinc-400 mb-3">
+                  Use isso para corrigir o saldo caso ele fique diferente do valor real (ex: após editar turnos antigos).
+                </p>
+                <form onSubmit={handleSaveWalletEdit} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Novo Saldo (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      autoFocus
+                      value={walletEditValue}
+                      onChange={e => setWalletEditValue(e.target.value)}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-amber-400 hover:bg-amber-500 text-black font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
+                  >
+                    Salvar Saldo
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: DASHBOARD MENSAL */}
+          {isMonthlyModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl max-h-[88vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="bar-chart-3" size={18} className="text-amber-400" /> Total Ganho por Mês
+                  </h3>
+                  <button onClick={() => setIsMonthlyModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+                  {monthlyTotals.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-6">Nenhuma diária registrada ainda.</p>
+                  )}
+                  {monthlyTotals.map(month => {
+                    const barPercent = month.maxIncome > 0 ? Math.max(4, Math.round((month.income / month.maxIncome) * 100)) : 0;
+                    return (
+                      <div key={month.key} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5">
+                        <div className="flex justify-between items-baseline mb-1.5">
+                          <span className="text-xs font-bold text-zinc-200">{month.label}</span>
+                          <span className="text-lg font-extrabold text-amber-400">
+                            R$ {month.income.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+
+                        <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden mb-2.5">
+                          <div
+                            className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-500"
+                            style={{ width: `${barPercent}%` }}
+                          ></div>
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-1 text-center pt-2 border-t border-zinc-800/60">
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Diárias</p>
+                            <p className="text-xs font-bold text-white">{month.count}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Online</p>
+                            <p className="text-xs font-bold text-white">{formatHoursMinutes(month.hours)}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Viagens</p>
+                            <p className="text-xs font-bold text-white">{month.trips}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Km</p>
+                            <p className="text-xs font-bold text-white">{month.km}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
