@@ -698,6 +698,11 @@
         setDebts(prev => prev.map(d => (d.id === id ? { ...d, current: 0 } : d)));
       };
 
+      // Marca a meta como paga por inteiro de uma vez (check rápido)
+      const handleMarkDebtPaid = (id) => {
+        setDebts(prev => prev.map(d => (d.id === id ? { ...d, current: d.target } : d)));
+      };
+
       // Grupos (metas menores)
       const handleSaveGroup = (e) => {
         e.preventDefault();
@@ -1393,6 +1398,15 @@
                                         title="Zerar valor pago desta conta"
                                       >
                                         <Icon name="rotate-ccw" size={14} />
+                                      </button>
+                                    )}
+                                    {!isPaid && (
+                                      <button
+                                        onClick={() => handleMarkDebtPaid(debt.id)}
+                                        className="p-1.5 text-zinc-400 hover:text-emerald-400 transition"
+                                        title="Marcar como paga por inteiro"
+                                      >
+                                        <Icon name="check-circle" size={14} />
                                       </button>
                                     )}
                                     <button
