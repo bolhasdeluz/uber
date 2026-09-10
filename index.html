@@ -190,6 +190,7 @@
       const [isDebtsListModalOpen, setIsDebtsListModalOpen] = useState(false);
       const [isDebtEditModalOpen, setIsDebtEditModalOpen] = useState(false);
       const [isGroupsModalOpen, setIsGroupsModalOpen] = useState(false);
+      const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
 
       // Edições
       const [editingShiftId, setEditingShiftId] = useState(null);
@@ -298,15 +299,22 @@
         };
       }, [shifts, expenses, weekOffset, weeklyGoal]);
 
+      // Metas ativas (exclui as que estão na lixeira) e metas na lixeira
+      const activeDebts = useMemo(() => debts.filter(d => !d.deletedAt), [debts]);
+      const trashedDebts = useMemo(
+        () => debts.filter(d => d.deletedAt).sort((a, b) => b.deletedAt - a.deletedAt),
+        [debts]
+      );
+
       // Totais da Trilha
       const debtTotals = useMemo(() => {
-        const totalTarget = debts.reduce((acc, d) => acc + d.target, 0);
-        const totalPaid = debts.reduce((acc, d) => acc + d.current, 0);
-        const allCompleted = debts.length > 0 && debts.every(d => d.current >= d.target);
+        const totalTarget = activeDebts.reduce((acc, d) => acc + d.target, 0);
+        const totalPaid = activeDebts.reduce((acc, d) => acc + d.current, 0);
+        const allCompleted = activeDebts.length > 0 && activeDebts.every(d => d.current >= d.target);
         const percent = totalTarget > 0 ? Math.min(100, Math.round((totalPaid / totalTarget) * 100)) : 100;
         const totalRemaining = Math.max(0, totalTarget - totalPaid);
         return { totalTarget, totalPaid, totalRemaining, allCompleted, percent };
-      }, [debts]);
+      }, [activeDebts]);
 
       // Metas organizadas por Grupo (metas menores dentro de cada grupo)
       const debtGroupsView = useMemo(() => {
@@ -327,19 +335,19 @@
           return { ...base, debts: groupDebts, target, paid, percent, completedCount };
         };
 
-        const sections = groups.map(g => buildSection(g, sortDebts(debts.filter(d => d.groupId === g.id))));
+        const sections = groups.map(g => buildSection(g, sortDebts(activeDebts.filter(d => d.groupId === g.id))));
 
-        const ungrouped = sortDebts(debts.filter(d => !knownGroupIds.has(d.groupId)));
+        const ungrouped = sortDebts(activeDebts.filter(d => !knownGroupIds.has(d.groupId)));
         if (ungrouped.length > 0) {
           sections.push(buildSection({ id: "ungrouped", name: "Sem Grupo", isUngrouped: true }, ungrouped));
         }
 
         return sections;
-      }, [groups, debts]);
+      }, [groups, activeDebts]);
 
       // Metas pendentes (para pagar no turno) organizadas por Grupo
       const payableDebtsGrouped = useMemo(() => {
-        const payable = debts.filter(
+        const payable = activeDebts.filter(
           d => d.current < d.target || (editingShiftId && shiftForm.allocations && shiftForm.allocations[d.id])
         );
         const knownGroupIds = new Set(groups.map(g => g.id));
@@ -352,7 +360,7 @@
           sections.push({ id: "ungrouped", name: "Sem Grupo", debts: ungrouped, isUngrouped: true });
         }
         return sections;
-      }, [debts, groups, editingShiftId, shiftForm.allocations]);
+      }, [activeDebts, groups, editingShiftId, shiftForm.allocations]);
 
       const toggleGroupCollapse = (id) => {
         setCollapsedGroups(prev => ({ ...prev, [id]: !prev[id] }));
@@ -576,8 +584,22 @@
       };
 
       const handleDeleteDebt = (id) => {
-        if (!confirm("Deseja realmente apagar esta meta?")) return;
+        if (!confirm("Mover esta meta para a lixeira? Você pode restaurá-la depois.")) return;
+        setDebts(prev => prev.map(d => (d.id === id ? { ...d, deletedAt: Date.now() } : d)));
+      };
+
+      const handleRestoreDebt = (id) => {
+        setDebts(prev => prev.map(d => (d.id === id ? { ...d, deletedAt: null } : d)));
+      };
+
+      const handlePermanentlyDeleteDebt = (id) => {
+        if (!confirm("Excluir esta meta para sempre? Essa ação não pode ser desfeita.")) return;
         setDebts(prev => prev.filter(d => d.id !== id));
+      };
+
+      const handleEmptyTrash = () => {
+        if (!confirm("Excluir permanentemente todas as metas da lixeira? Essa ação não pode ser desfeita.")) return;
+        setDebts(prev => prev.filter(d => !d.deletedAt));
       };
 
       // Função manual de reset caso precise zerar o valor pago de uma meta específica
@@ -1118,7 +1140,7 @@
                       <Icon name="list-checks" size={18} className="text-amber-400" /> Metas Cadastradas
                     </h3>
                     <p className="text-[11px] text-zinc-400">
-                      {debts.filter(d => d.current >= d.target).length} de {debts.length} quitadas
+                      {activeDebts.filter(d => d.current >= d.target).length} de {activeDebts.length} quitadas
                     </p>
                   </div>
                   <button onClick={() => setIsDebtsListModalOpen(false)} className="text-zinc-400 hover:text-white">
@@ -1126,7 +1148,7 @@
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 mb-3">
+                <div className="grid grid-cols-3 gap-2 mb-3">
                   <button
                     onClick={() => {
                       setEditingDebtId(null);
@@ -1135,13 +1157,24 @@
                     }}
                     className="bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
                   >
-                    <Icon name="plus" size={14} /> Nova Meta
+                    <Icon name="plus" size={14} /> Nova
                   </button>
                   <button
                     onClick={() => setIsGroupsModalOpen(true)}
                     className="bg-zinc-800 hover:bg-zinc-700 text-sky-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
                   >
                     <Icon name="layers" size={14} /> Grupos
+                  </button>
+                  <button
+                    onClick={() => setIsTrashModalOpen(true)}
+                    className="relative bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Icon name="trash-2" size={14} /> Lixeira
+                    {trashedDebts.length > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
+                        {trashedDebts.length}
+                      </span>
+                    )}
                   </button>
                 </div>
 
@@ -1316,7 +1349,7 @@
                       </div>
                       <span className="text-xs font-bold text-white flex-1 truncate">{group.name}</span>
                       <span className="text-[10px] text-zinc-500 shrink-0">
-                        {debts.filter(d => d.groupId === group.id).length} metas
+                        {activeDebts.filter(d => d.groupId === group.id).length} metas
                       </span>
                       <button
                         onClick={() => handleOpenEditGroup(group)}
@@ -1335,6 +1368,70 @@
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: LIXEIRA DE METAS */}
+          {isTrashModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl max-h-[85vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="trash-2" size={18} className="text-zinc-400" /> Lixeira
+                  </h3>
+                  <button onClick={() => setIsTrashModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 mb-3">
+                  Metas apagadas ficam aqui até você restaurar ou excluir para sempre.
+                </p>
+
+                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+                  {trashedDebts.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-6">A lixeira está vazia.</p>
+                  )}
+                  {trashedDebts.map(debt => (
+                    <div
+                      key={debt.id}
+                      className="bg-zinc-950 border border-zinc-800 p-3 rounded-2xl flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-zinc-300 block truncate">{debt.name}</span>
+                        <span className="text-[11px] text-zinc-500">
+                          R$ {debt.current.toFixed(2)} de R$ {debt.target.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => handleRestoreDebt(debt.id)}
+                          className="p-1.5 text-zinc-400 hover:text-emerald-400 transition"
+                          title="Restaurar meta"
+                        >
+                          <Icon name="rotate-ccw" size={14} />
+                        </button>
+                        <button
+                          onClick={() => handlePermanentlyDeleteDebt(debt.id)}
+                          className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                          title="Excluir para sempre"
+                        >
+                          <Icon name="trash-2" size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {trashedDebts.length > 0 && (
+                  <button
+                    onClick={handleEmptyTrash}
+                    className="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-bold py-2 rounded-xl text-xs active:scale-95 transition mt-3"
+                  >
+                    Esvaziar Lixeira
+                  </button>
+                )}
               </div>
             </div>
           )}
