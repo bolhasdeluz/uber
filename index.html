@@ -46,7 +46,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
 
     const getTodayLocalDate = () => {
       const d = new Date();
@@ -203,6 +203,8 @@
       const [isPartialPayModalOpen, setIsPartialPayModalOpen] = useState(false);
       const [payingDebtId, setPayingDebtId] = useState(null);
       const [partialPayValue, setPartialPayValue] = useState("");
+      const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
+      const importFileInputRef = useRef(null);
 
       // Edições
       const [editingShiftId, setEditingShiftId] = useState(null);
@@ -777,6 +779,47 @@
         setIsWalletEditModalOpen(false);
       };
 
+      // Backup: baixa um arquivo .json com todos os dados do app
+      const handleExportBackup = () => {
+        const backup = { version: 1, exportedAt: new Date().toISOString(), wallet, shifts, expenses, debts, groups, weeklyGoal };
+        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `rota-da-liberdade-backup-${getTodayLocalDate()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      // Backup: restaura os dados a partir de um arquivo .json exportado antes
+      const handleImportBackupFile = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const data = JSON.parse(ev.target.result);
+            if (!confirm("Restaurar esse backup vai substituir os dados atuais no app (carteira, turnos, gastos, metas e grupos). Deseja continuar?")) {
+              return;
+            }
+            if (typeof data.wallet === "number") setWallet(data.wallet);
+            if (Array.isArray(data.shifts)) setShifts(data.shifts);
+            if (Array.isArray(data.expenses)) setExpenses(data.expenses);
+            if (Array.isArray(data.debts)) setDebts(data.debts);
+            if (Array.isArray(data.groups)) setGroups(data.groups);
+            if (typeof data.weeklyGoal === "number") setWeeklyGoal(data.weeklyGoal);
+            alert("Backup restaurado com sucesso!");
+            setIsBackupModalOpen(false);
+          } catch (err) {
+            alert("Não foi possível ler esse arquivo. Verifique se é um backup válido gerado pelo próprio app.");
+          }
+        };
+        reader.readAsText(file);
+        e.target.value = "";
+      };
+
       // Total ganho por mês, para o Dashboard Mensal
       const monthlyTotals = useMemo(() => {
         const map = {};
@@ -834,13 +877,22 @@
                 </div>
               </div>
 
-              <button
-                onClick={() => setIsMonthlyModalOpen(true)}
-                className="text-xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-xl border border-zinc-700/80 flex items-center gap-1.5 transition active:scale-95"
-              >
-                <Icon name="bar-chart-3" size={14} className="text-amber-400" />
-                <span>Por Mês</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsMonthlyModalOpen(true)}
+                  className="text-xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-xl border border-zinc-700/80 flex items-center gap-1.5 transition active:scale-95"
+                >
+                  <Icon name="bar-chart-3" size={14} className="text-amber-400" />
+                  <span>Por Mês</span>
+                </button>
+                <button
+                  onClick={() => setIsBackupModalOpen(true)}
+                  className="text-xs bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 p-2 rounded-xl border border-zinc-700/80 flex items-center justify-center transition active:scale-95"
+                  title="Backup dos dados"
+                >
+                  <Icon name="database-backup" size={14} className="text-amber-400" />
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -1806,6 +1858,49 @@
               </div>
             );
           })()}
+
+          {/* MODAL: BACKUP E RESTAURAÇÃO */}
+          {isBackupModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="database-backup" size={18} className="text-amber-400" /> Backup dos Dados
+                  </h3>
+                  <button onClick={() => setIsBackupModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 mb-4">
+                  Os dados do app ficam salvos só neste navegador. Se o celular limpar o armazenamento
+                  do site (comum em navegação anônima ou apps adicionados à tela de início), tudo pode
+                  se perder. Baixe um backup de vez em quando para não correr esse risco.
+                </p>
+
+                <button
+                  onClick={handleExportBackup}
+                  className="w-full bg-amber-400 hover:bg-amber-500 text-black font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition mb-3"
+                >
+                  <Icon name="download" size={16} /> Baixar Backup (.json)
+                </button>
+
+                <button
+                  onClick={() => importFileInputRef.current && importFileInputRef.current.click()}
+                  className="w-full bg-zinc-800 hover:bg-zinc-700 text-sky-400 border border-zinc-700 font-bold py-2.5 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition"
+                >
+                  <Icon name="upload" size={16} /> Restaurar de um Backup
+                </button>
+                <input
+                  ref={importFileInputRef}
+                  type="file"
+                  accept="application/json"
+                  onChange={handleImportBackupFile}
+                  className="hidden"
+                />
+              </div>
+            </div>
+          )}
 
           {/* MODAL: AJUSTAR SALDO DA CARTEIRA */}
           {isWalletEditModalOpen && (
