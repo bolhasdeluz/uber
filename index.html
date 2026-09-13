@@ -204,6 +204,7 @@
       const [isDebtEditModalOpen, setIsDebtEditModalOpen] = useState(false);
       const [isGroupsModalOpen, setIsGroupsModalOpen] = useState(false);
       const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+      const [isInstallmentCalendarOpen, setIsInstallmentCalendarOpen] = useState(false);
       const [isWalletEditModalOpen, setIsWalletEditModalOpen] = useState(false);
       const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
       const [isDayDetailModalOpen, setIsDayDetailModalOpen] = useState(false);
@@ -231,7 +232,15 @@
       });
 
       const [expenseForm, setExpenseForm] = useState({ amount: "", description: "", date: getTodayLocalDate() });
-      const [debtForm, setDebtForm] = useState({ name: "", target: "", groupId: "" });
+      const [debtForm, setDebtForm] = useState({
+        name: "",
+        target: "",
+        groupId: "",
+        isInstallment: false,
+        installmentTotal: "",
+        installmentValue: "",
+        installmentFirstDue: getTodayLocalDate(),
+      });
       const [groupForm, setGroupForm] = useState({ name: "" });
       const [walletEditValue, setWalletEditValue] = useState("");
 
@@ -415,6 +424,41 @@
       }, [activeDebts]);
 
       // Metas organizadas por Grupo (metas menores dentro de cada grupo)
+      // Calendário de parcelas: quanto vence em cada mês, olhando as metas parceladas
+      const installmentScheduleByMonth = useMemo(() => {
+        const monthMap = {};
+
+        activeDebts.forEach(debt => {
+          if (!debt.installments) return;
+          const { total, value, firstDueDate } = debt.installments;
+          if (!total || !value || !firstDueDate) return;
+
+          const paidCount = Math.min(total, Math.round(debt.current / value));
+          const [fy, fm, fd] = firstDueDate.split("-").map(Number);
+
+          for (let i = paidCount; i < total; i++) {
+            const dueDate = new Date(fy, fm - 1 + i, fd || 1);
+            const key = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, "0")}`;
+            if (!monthMap[key]) monthMap[key] = { total: 0, items: [] };
+            monthMap[key].total += value;
+            monthMap[key].items.push({
+              debtId: debt.id,
+              name: debt.name,
+              value,
+              installmentNumber: i + 1,
+              totalInstallments: total
+            });
+          }
+        });
+
+        return Object.entries(monthMap)
+          .map(([key, vals]) => {
+            const [year, month] = key.split("-").map(Number);
+            return { key, label: `${MONTH_FULL_NAMES[month - 1]} de ${year}`, ...vals };
+          })
+          .sort((a, b) => a.key.localeCompare(b.key));
+      }, [activeDebts]);
+
       const debtGroupsView = useMemo(() => {
         const knownGroupIds = new Set(groups.map(g => g.id));
         const sortDebts = (list) =>
@@ -632,17 +676,37 @@
       // Metas
       const handleSaveDebt = (e) => {
         e.preventDefault();
-        const target = parseFloat(debtForm.target) || 0;
-        if (!debtForm.name || target <= 0) return;
+        if (!debtForm.name) return;
         const groupId = debtForm.groupId ? parseInt(debtForm.groupId) : null;
 
-        if (editingDebtId) {
-          setDebts(prev => prev.map(d => (d.id === editingDebtId ? { ...d, name: debtForm.name, target, groupId } : d)));
+        let target;
+        let installments = null;
+        if (debtForm.isInstallment) {
+          const total = parseInt(debtForm.installmentTotal) || 0;
+          const value = parseFloat(debtForm.installmentValue) || 0;
+          if (total <= 0 || value <= 0 || !debtForm.installmentFirstDue) return;
+          target = total * value;
+          installments = { total, value, firstDueDate: debtForm.installmentFirstDue };
         } else {
-          setDebts([...debts, { id: Date.now(), name: debtForm.name, target, current: 0, groupId }]);
+          target = parseFloat(debtForm.target) || 0;
+          if (target <= 0) return;
         }
 
-        setDebtForm({ name: "", target: "", groupId: "" });
+        if (editingDebtId) {
+          setDebts(prev => prev.map(d => (d.id === editingDebtId ? { ...d, name: debtForm.name, target, groupId, installments } : d)));
+        } else {
+          setDebts([...debts, { id: Date.now(), name: debtForm.name, target, current: 0, groupId, installments }]);
+        }
+
+        setDebtForm({
+          name: "",
+          target: "",
+          groupId: "",
+          isInstallment: false,
+          installmentTotal: "",
+          installmentValue: "",
+          installmentFirstDue: getTodayLocalDate(),
+        });
         setEditingDebtId(null);
         setIsDebtEditModalOpen(false);
       };
@@ -653,6 +717,10 @@
           name: debt.name,
           target: debt.target.toString(),
           groupId: debt.groupId != null ? debt.groupId.toString() : "",
+          isInstallment: !!debt.installments,
+          installmentTotal: debt.installments ? debt.installments.total.toString() : "",
+          installmentValue: debt.installments ? debt.installments.value.toString() : "",
+          installmentFirstDue: debt.installments ? debt.installments.firstDueDate : getTodayLocalDate(),
         });
         setIsDebtEditModalOpen(true);
       };
@@ -685,6 +753,14 @@
       // Marca a meta como paga por inteiro de uma vez (check rápido)
       const handleMarkDebtPaid = (id) => {
         setDebts(prev => prev.map(d => (d.id === id ? { ...d, current: d.target } : d)));
+      };
+
+      // Paga exatamente o valor de uma parcela (para metas parceladas)
+      const handlePayOneInstallment = (debt) => {
+        if (!debt.installments) return;
+        setDebts(prev =>
+          prev.map(d => (d.id === debt.id ? { ...d, current: Math.min(d.target, d.current + debt.installments.value) } : d))
+        );
       };
 
       // Pagamento parcial rápido: soma um valor ao que já foi pago na meta
@@ -1435,22 +1511,38 @@
                   </button>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 mb-3">
+                <div className="grid grid-cols-2 gap-2 mb-2">
                   <button
                     onClick={() => {
                       setEditingDebtId(null);
-                      setDebtForm({ name: "", target: "", groupId: groups[0] ? groups[0].id.toString() : "" });
+                      setDebtForm({
+                        name: "",
+                        target: "",
+                        groupId: groups[0] ? groups[0].id.toString() : "",
+                        isInstallment: false,
+                        installmentTotal: "",
+                        installmentValue: "",
+                        installmentFirstDue: getTodayLocalDate(),
+                      });
                       setIsDebtEditModalOpen(true);
                     }}
                     className="bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
                   >
-                    <Icon name="plus" size={14} /> Nova
+                    <Icon name="plus" size={14} /> Nova Meta
                   </button>
                   <button
                     onClick={() => setIsGroupsModalOpen(true)}
                     className="bg-zinc-800 hover:bg-zinc-700 text-sky-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
                   >
                     <Icon name="layers" size={14} /> Grupos
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <button
+                    onClick={() => setIsInstallmentCalendarOpen(true)}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Icon name="calendar-days" size={14} /> Vencimentos
                   </button>
                   <button
                     onClick={() => setIsTrashModalOpen(true)}
@@ -1502,6 +1594,10 @@
                             </div>
                             {section.debts.map(debt => {
                               const isPaid = debt.current >= debt.target;
+                              const installmentsPaid = debt.installments
+                                ? Math.min(debt.installments.total, Math.round(debt.current / debt.installments.value))
+                                : null;
+                              const installmentsLeft = debt.installments ? debt.installments.total - installmentsPaid : null;
                               return (
                                 <div
                                   key={debt.id}
@@ -1519,6 +1615,12 @@
                                     <span className="text-[11px] text-zinc-400">
                                       R$ {debt.current.toFixed(2)} de R$ {debt.target.toFixed(2)}
                                     </span>
+                                    {debt.installments && (
+                                      <span className="text-[10px] text-sky-400 font-semibold block">
+                                        Parcela {installmentsPaid}/{debt.installments.total}
+                                        {!isPaid && ` • faltam ${installmentsLeft}`}
+                                      </span>
+                                    )}
                                   </div>
 
                                   <div className="flex items-center gap-1">
@@ -1529,6 +1631,15 @@
                                         title="Zerar valor pago desta conta"
                                       >
                                         <Icon name="rotate-ccw" size={14} />
+                                      </button>
+                                    )}
+                                    {!isPaid && debt.installments && (
+                                      <button
+                                        onClick={() => handlePayOneInstallment(debt)}
+                                        className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                                        title={`Pagar 1 parcela (R$ ${debt.installments.value.toFixed(2)})`}
+                                      >
+                                        <Icon name="calendar-check" size={14} />
                                       </button>
                                     )}
                                     {!isPaid && (
@@ -1741,6 +1852,54 @@
             </div>
           )}
 
+          {/* MODAL: CALENDÁRIO DE PARCELAS (QUANTO VENCE EM CADA MÊS) */}
+          {isInstallmentCalendarOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl max-h-[85vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="calendar-days" size={18} className="text-emerald-400" /> Vencimentos por Mês
+                  </h3>
+                  <button onClick={() => setIsInstallmentCalendarOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 mb-3">
+                  Quanto falta pagar em parcelas, mês a mês (só entram aqui as metas marcadas como parceladas).
+                </p>
+
+                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+                  {installmentScheduleByMonth.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-6">
+                      Nenhuma meta parcelada com parcelas pendentes.
+                    </p>
+                  )}
+                  {installmentScheduleByMonth.map(month => (
+                    <div key={month.key} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5">
+                      <div className="flex justify-between items-baseline mb-2">
+                        <span className="text-xs font-bold text-zinc-200">{month.label}</span>
+                        <span className="text-lg font-extrabold text-emerald-400">
+                          R$ {month.total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5 pt-2 border-t border-zinc-800/60">
+                        {month.items.map(item => (
+                          <div key={`${item.debtId}-${item.installmentNumber}`} className="flex justify-between items-center text-[11px]">
+                            <span className="text-zinc-400">
+                              {item.name} <span className="text-zinc-600">({item.installmentNumber}/{item.totalInstallments})</span>
+                            </span>
+                            <span className="text-zinc-300 font-semibold">R$ {item.value.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* MODAL: CRIAR OU EDITAR META */}
           {isDebtEditModalOpen && (
             <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -1766,17 +1925,94 @@
                     />
                   </div>
                   <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Valor Total (R$)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      required
-                      placeholder="Ex: 600.00"
-                      value={debtForm.target}
-                      onChange={e => setDebtForm({ ...debtForm, target: e.target.value })}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                    />
+                    <label className="text-[11px] text-zinc-400 block mb-1">Essa meta é parcelada?</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDebtForm({ ...debtForm, isInstallment: false })}
+                        className={`py-2 rounded-xl text-xs font-bold border transition ${
+                          !debtForm.isInstallment
+                            ? "bg-white text-black border-white"
+                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                        }`}
+                      >
+                        Não
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDebtForm({ ...debtForm, isInstallment: true })}
+                        className={`py-2 rounded-xl text-xs font-bold border transition ${
+                          debtForm.isInstallment
+                            ? "bg-sky-500 text-black border-sky-500"
+                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                        }`}
+                      >
+                        Sim, em parcelas
+                      </button>
+                    </div>
                   </div>
+
+                  {!debtForm.isInstallment ? (
+                    <div>
+                      <label className="text-[11px] text-zinc-400 block mb-1">Valor Total (R$)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="Ex: 600.00"
+                        value={debtForm.target}
+                        onChange={e => setDebtForm({ ...debtForm, target: e.target.value })}
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-3 bg-zinc-950/60 border border-zinc-800 rounded-xl p-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] text-zinc-400 block mb-1">Quantas Parcelas</label>
+                          <input
+                            type="number"
+                            step="1"
+                            required
+                            placeholder="Ex: 12"
+                            value={debtForm.installmentTotal}
+                            onChange={e => setDebtForm({ ...debtForm, installmentTotal: e.target.value })}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-zinc-400 block mb-1">Valor de Cada (R$)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            required
+                            placeholder="Ex: 100.00"
+                            value={debtForm.installmentValue}
+                            onChange={e => setDebtForm({ ...debtForm, installmentValue: e.target.value })}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-400"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Data da 1ª Parcela</label>
+                        <input
+                          type="date"
+                          required
+                          value={debtForm.installmentFirstDue}
+                          onChange={e => setDebtForm({ ...debtForm, installmentFirstDue: e.target.value })}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-400 [color-scheme:dark]"
+                        />
+                      </div>
+                      {debtForm.installmentTotal && debtForm.installmentValue && (
+                        <p className="text-[11px] text-sky-400 font-semibold">
+                          Valor total: R$ {(
+                            (parseInt(debtForm.installmentTotal) || 0) * (parseFloat(debtForm.installmentValue) || 0)
+                          ).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div>
                     <label className="text-[11px] text-zinc-400 block mb-1">Grupo</label>
                     <select
