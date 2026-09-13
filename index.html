@@ -230,7 +230,6 @@
         trips: "",
       });
 
-      const [allocations, setAllocations] = useState({});
       const [expenseForm, setExpenseForm] = useState({ amount: "", description: "", date: getTodayLocalDate() });
       const [debtForm, setDebtForm] = useState({ name: "", target: "", groupId: "" });
       const [groupForm, setGroupForm] = useState({ name: "" });
@@ -444,23 +443,6 @@
         return sections;
       }, [groups, activeDebts]);
 
-      // Metas pendentes (para pagar no turno) organizadas por Grupo
-      const payableDebtsGrouped = useMemo(() => {
-        const payable = activeDebts.filter(
-          d => d.current < d.target || (editingShiftId && shiftForm.allocations && shiftForm.allocations[d.id])
-        );
-        const knownGroupIds = new Set(groups.map(g => g.id));
-        const sections = groups
-          .map(g => ({ ...g, debts: payable.filter(d => d.groupId === g.id) }))
-          .filter(s => s.debts.length > 0);
-
-        const ungrouped = payable.filter(d => !knownGroupIds.has(d.groupId));
-        if (ungrouped.length > 0) {
-          sections.push({ id: "ungrouped", name: "Sem Grupo", debts: ungrouped, isUngrouped: true });
-        }
-        return sections;
-      }, [activeDebts, groups, editingShiftId, shiftForm.allocations]);
-
       const toggleGroupCollapse = (id) => {
         setCollapsedGroups(prev => ({ ...prev, [id]: !prev[id] }));
       };
@@ -520,63 +502,18 @@
 
         if (income <= 0) return;
 
-        let totalAllocated = 0;
-        Object.values(allocations).forEach(val => {
-          totalAllocated += parseFloat(val) || 0;
-        });
-
-        if (totalAllocated > (income + wallet)) {
-          alert("O valor alocado nas metas supera o faturado + saldo da carteira!");
-          return;
-        }
-
         if (editingShiftId) {
           const oldShift = shifts.find(s => s.id === editingShiftId);
-          const oldAllocations = oldShift?.allocations || {};
-
-          // Ajusta as metas com base na diferença entre alocação antiga e nova
-          setDebts(prev =>
-            prev.map(d => {
-              const oldPaidHere = parseFloat(oldAllocations[d.id]) || 0;
-              const newPaidHere = parseFloat(allocations[d.id]) || 0;
-              const diff = newPaidHere - oldPaidHere;
-              return { ...d, current: Math.max(0, Math.min(d.target, d.current + diff)) };
-            })
-          );
-
-          let oldTotalAllocated = 0;
-          Object.values(oldAllocations).forEach(val => {
-            oldTotalAllocated += parseFloat(val) || 0;
-          });
-
           const diffIncome = income - (oldShift ? oldShift.income : 0);
-          setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, platform: shiftForm.platform, income, hours, km, trips, allocations } : s)));
-          setWallet(prev => Math.max(0, prev + diffIncome - totalAllocated + oldTotalAllocated));
+          setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, platform: shiftForm.platform, income, hours, km, trips } : s)));
+          setWallet(prev => Math.max(0, prev + diffIncome));
         } else {
-          if (totalAllocated > 0) {
-            setDebts(prev =>
-              prev.map(d => {
-                const allocatedToThis = parseFloat(allocations[d.id]) || 0;
-                if (allocatedToThis > 0) {
-                  return { ...d, current: Math.min(d.target, d.current + allocatedToThis) };
-                }
-                return d;
-              })
-            );
-
-            if (window.confetti) {
-              window.confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-            }
-          }
-
-          const leftOver = income - totalAllocated;
-          setShifts([{ id: Date.now(), date: shiftForm.date, platform: shiftForm.platform, income, hours, km, trips, allocations }, ...shifts]);
-          setWallet(prev => Math.max(0, prev + leftOver));
+          setShifts([{ id: Date.now(), date: shiftForm.date, platform: shiftForm.platform, income, hours, km, trips, allocations: {} }, ...shifts]);
+          setWallet(prev => Math.max(0, prev + income));
         }
 
         setIsShiftModalOpen(false);
         setEditingShiftId(null);
-        setAllocations({});
         setShiftForm({
           date: getTodayLocalDate(),
           platform: "uber",
@@ -597,13 +534,25 @@
           km: shift.km ? shift.km.toString() : "",
           trips: shift.trips ? shift.trips.toString() : "",
         });
-        setAllocations(shift.allocations || {});
+        setIsShiftModalOpen(true);
+      };
+
+      const handleOpenNewShiftForDate = (dateStr) => {
+        setEditingShiftId(null);
+        setShiftForm({
+          date: dateStr,
+          platform: "uber",
+          income: "",
+          hours: "",
+          km: "",
+          trips: "",
+        });
         setIsShiftModalOpen(true);
       };
 
       // EXCLUSÃO DE TURNO: ESTORNA O VALOR PAGO NAS METAS
       const handleDeleteShift = (id) => {
-        if (!confirm("Tem certeza que deseja excluir esse turno? Os valores pagos em contas com esse dinheiro serão estornados.")) return;
+        if (!confirm("Tem certeza que deseja excluir esse turno? O valor será removido da carteira.")) return;
         const shiftToDelete = shifts.find(s => s.id === id);
         if (!shiftToDelete) return;
 
@@ -955,19 +904,7 @@
 
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => {
-                  setEditingShiftId(null);
-                  setAllocations({});
-                  setShiftForm({
-                    date: getTodayLocalDate(),
-                    platform: "uber",
-                    income: "",
-                    hours: "",
-                    km: "",
-                    trips: "",
-                  });
-                  setIsShiftModalOpen(true);
-                }}
+                onClick={() => handleOpenNewShiftForDate(getTodayLocalDate())}
                 className="bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs active:scale-95 transition"
               >
                 <Icon name="plus-circle" size={16} />
@@ -1205,9 +1142,9 @@
                 <h4 className="text-lg font-bold tracking-tight">Estatísticas</h4>
               </div>
 
-              {activeStats.isSingleDay && activeStats.shiftsList && activeStats.shiftsList.length > 0 && (
+              {activeStats.isSingleDay && selectedDayIndex !== null && weekData.days[selectedDayIndex] && (
                 <div className="space-y-2 mb-4">
-                  {activeStats.shiftsList.map(shift => (
+                  {activeStats.shiftsList && activeStats.shiftsList.length > 0 && activeStats.shiftsList.map(shift => (
                     <div
                       key={shift.id}
                       className="bg-zinc-900 border border-zinc-800/80 p-2.5 rounded-xl flex justify-between items-center"
@@ -1242,6 +1179,12 @@
                       </div>
                     </div>
                   ))}
+                  <button
+                    onClick={() => handleOpenNewShiftForDate(weekData.days[selectedDayIndex].dateStr)}
+                    className="w-full text-xs bg-zinc-900 hover:bg-zinc-800 text-emerald-400 border border-dashed border-zinc-700 py-2 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95"
+                  >
+                    <Icon name="plus" size={13} /> Adicionar Turno Neste Dia
+                  </button>
                 </div>
               )}
 
@@ -1351,14 +1294,14 @@
             )}
           </section>
 
-          {/* MODAL: REGISTRAR TURNO + PAGAR METAS */}
+          {/* MODAL: REGISTRAR TURNO */}
           {isShiftModalOpen && (
             <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 overflow-y-auto">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl my-auto max-h-[90vh] flex flex-col">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-bold text-base text-white flex items-center gap-2">
                     <Icon name="bike" size={18} className="text-amber-400" />
-                    {editingShiftId ? "Editar Turno" : "Fechar o Dia & Pagar Metas"}
+                    {editingShiftId ? "Editar Turno" : "Registrar Turno"}
                   </h3>
                   <button onClick={() => setIsShiftModalOpen(false)} className="text-zinc-400 hover:text-white">
                     <Icon name="x" size={20} />
@@ -1450,51 +1393,6 @@
                         onChange={e => setShiftForm({ ...shiftForm, trips: e.target.value })}
                         className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
                       />
-                    </div>
-                  </div>
-
-                  {/* SEÇÃO: Escolha quais metas pagar hoje */}
-                  <div className="pt-3 border-t border-zinc-800">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
-                        <Icon name="coins" size={14} /> Pagar Metas com Esse Valor
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 mb-2">
-                      Digite quanto deste faturamento você quer abater em cada conta hoje:
-                    </p>
-
-                    <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
-                      {payableDebtsGrouped.map(section => (
-                        <div key={section.id}>
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1.5">
-                            {section.name}
-                          </span>
-                          <div className="space-y-2">
-                            {section.debts.map(debt => {
-                              const remaining = debt.target - debt.current;
-                              return (
-                                <div key={debt.id} className="bg-zinc-800/70 border border-zinc-700/60 p-2 rounded-xl flex items-center justify-between gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <span className="text-xs font-bold text-zinc-200 block truncate">{debt.name}</span>
-                                    <span className="text-[10px] text-zinc-400">Resta: R$ {remaining.toFixed(2)}</span>
-                                  </div>
-                                  <div className="w-24">
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      placeholder="R$ 0,00"
-                                      value={allocations[debt.id] || ""}
-                                      onChange={e => setAllocations({ ...allocations, [debt.id]: e.target.value })}
-                                      className="w-full bg-zinc-900 border border-zinc-600 rounded-lg px-2 py-1 text-xs text-white text-right focus:outline-none focus:border-amber-400"
-                                    />
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   </div>
 
@@ -2271,6 +2169,12 @@
                               </div>
                             </div>
                           ))}
+                          <button
+                            onClick={() => handleOpenNewShiftForDate(day.key)}
+                            className="w-full text-xs bg-zinc-900 hover:bg-zinc-800 text-emerald-400 border border-dashed border-zinc-700 py-2 rounded-xl flex items-center justify-center gap-1.5 transition active:scale-95"
+                          >
+                            <Icon name="plus" size={13} /> Adicionar Turno Neste Dia
+                          </button>
                         </div>
                       </div>
                     );
