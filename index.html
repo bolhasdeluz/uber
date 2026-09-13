@@ -194,6 +194,21 @@
         return saved ? parseFloat(saved) : 800;
       });
 
+      const [monthlyIncome, setMonthlyIncome] = useState(() => {
+        const saved = localStorage.getItem("rota_income_master");
+        return saved ? parseFloat(saved) : 7000;
+      });
+
+      const [fixedExpenseGroups, setFixedExpenseGroups] = useState(() => {
+        const saved = localStorage.getItem("rota_income_groups_master");
+        return saved ? JSON.parse(saved) : [];
+      });
+
+      const [fixedExpenses, setFixedExpenses] = useState(() => {
+        const saved = localStorage.getItem("rota_income_expenses_master");
+        return saved ? JSON.parse(saved) : [];
+      });
+
       const [weekOffset, setWeekOffset] = useState(0);
       const [selectedDayIndex, setSelectedDayIndex] = useState(null);
 
@@ -205,6 +220,16 @@
       const [isGroupsModalOpen, setIsGroupsModalOpen] = useState(false);
       const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
       const [isInstallmentCalendarOpen, setIsInstallmentCalendarOpen] = useState(false);
+      const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
+      const [isIncomeEditModalOpen, setIsIncomeEditModalOpen] = useState(false);
+      const [incomeEditValue, setIncomeEditValue] = useState("");
+      const [isFixedExpenseGroupsModalOpen, setIsFixedExpenseGroupsModalOpen] = useState(false);
+      const [isFixedExpenseFormModalOpen, setIsFixedExpenseFormModalOpen] = useState(false);
+      const [editingFixedExpenseId, setEditingFixedExpenseId] = useState(null);
+      const [fixedExpenseForm, setFixedExpenseForm] = useState({ name: "", value: "", groupId: "" });
+      const [editingFixedExpenseGroupId, setEditingFixedExpenseGroupId] = useState(null);
+      const [fixedExpenseGroupForm, setFixedExpenseGroupForm] = useState({ name: "" });
+      const [collapsedFixedExpenseGroups, setCollapsedFixedExpenseGroups] = useState({});
       const [isWalletEditModalOpen, setIsWalletEditModalOpen] = useState(false);
       const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
       const [isDayDetailModalOpen, setIsDayDetailModalOpen] = useState(false);
@@ -251,8 +276,11 @@
         localStorage.setItem("rota_debts_master", JSON.stringify(debts));
         localStorage.setItem("rota_groups_master", JSON.stringify(groups));
         localStorage.setItem("rota_goal", weeklyGoal.toString());
+        localStorage.setItem("rota_income_master", monthlyIncome.toString());
+        localStorage.setItem("rota_income_groups_master", JSON.stringify(fixedExpenseGroups));
+        localStorage.setItem("rota_income_expenses_master", JSON.stringify(fixedExpenses));
         if (window.lucide) window.lucide.createIcons();
-      }, [wallet, shifts, expenses, debts, groups, weeklyGoal]);
+      }, [wallet, shifts, expenses, debts, groups, weeklyGoal, monthlyIncome, fixedExpenseGroups, fixedExpenses]);
 
       // Correção pontual: restaura/atualiza a lista completa de metas (Casa, Terreiro, Dívidas)
       // com os valores corretos, sem apagar o que já foi pago nem duplicar metas existentes.
@@ -458,6 +486,36 @@
           })
           .sort((a, b) => a.key.localeCompare(b.key));
       }, [activeDebts]);
+
+      // Renda: total de contas fixas, saldo restante e agrupamento por categoria
+      const totalFixedExpenses = useMemo(
+        () => fixedExpenses.reduce((acc, e) => acc + e.value, 0),
+        [fixedExpenses]
+      );
+      const incomeBalance = monthlyIncome - totalFixedExpenses;
+
+      const fixedExpenseGroupsView = useMemo(() => {
+        const knownGroupIds = new Set(fixedExpenseGroups.map(g => g.id));
+
+        const sections = fixedExpenseGroups.map(g => {
+          const items = fixedExpenses.filter(e => e.groupId === g.id);
+          const total = items.reduce((acc, e) => acc + e.value, 0);
+          return { ...g, items, total };
+        });
+
+        const ungrouped = fixedExpenses.filter(e => !knownGroupIds.has(e.groupId));
+        if (ungrouped.length > 0) {
+          sections.push({
+            id: "ungrouped",
+            name: "Sem Categoria",
+            items: ungrouped,
+            total: ungrouped.reduce((acc, e) => acc + e.value, 0),
+            isUngrouped: true
+          });
+        }
+
+        return sections;
+      }, [fixedExpenseGroups, fixedExpenses]);
 
       const debtGroupsView = useMemo(() => {
         const knownGroupIds = new Set(groups.map(g => g.id));
@@ -825,6 +883,95 @@
         });
       };
 
+      // Ajuste manual da renda mensal
+      const handleSaveIncomeEdit = (e) => {
+        e.preventDefault();
+        const value = parseFloat(incomeEditValue);
+        if (isNaN(value) || value < 0) return;
+        setMonthlyIncome(value);
+        setIsIncomeEditModalOpen(false);
+      };
+
+      // Categorias das contas fixas (Renda)
+      const handleSaveFixedExpenseGroup = (e) => {
+        e.preventDefault();
+        const name = fixedExpenseGroupForm.name.trim();
+        if (!name) return;
+
+        if (editingFixedExpenseGroupId) {
+          setFixedExpenseGroups(prev => prev.map(g => (g.id === editingFixedExpenseGroupId ? { ...g, name } : g)));
+        } else {
+          setFixedExpenseGroups(prev => [...prev, { id: Date.now(), name }]);
+        }
+
+        setFixedExpenseGroupForm({ name: "" });
+        setEditingFixedExpenseGroupId(null);
+      };
+
+      const handleOpenEditFixedExpenseGroup = (group) => {
+        setEditingFixedExpenseGroupId(group.id);
+        setFixedExpenseGroupForm({ name: group.name });
+      };
+
+      const handleCancelEditFixedExpenseGroup = () => {
+        setEditingFixedExpenseGroupId(null);
+        setFixedExpenseGroupForm({ name: "" });
+      };
+
+      const handleDeleteFixedExpenseGroup = (id) => {
+        if (!confirm("Excluir esta categoria? As contas dela voltam a ficar sem categoria.")) return;
+        setFixedExpenseGroups(prev => prev.filter(g => g.id !== id));
+        if (editingFixedExpenseGroupId === id) handleCancelEditFixedExpenseGroup();
+      };
+
+      const handleMoveFixedExpenseGroup = (id, direction) => {
+        setFixedExpenseGroups(prev => {
+          const idx = prev.findIndex(g => g.id === id);
+          const newIdx = idx + direction;
+          if (idx < 0 || newIdx < 0 || newIdx >= prev.length) return prev;
+          const copy = [...prev];
+          [copy[idx], copy[newIdx]] = [copy[newIdx], copy[idx]];
+          return copy;
+        });
+      };
+
+      const toggleFixedExpenseGroupCollapse = (id) => {
+        setCollapsedFixedExpenseGroups(prev => ({ ...prev, [id]: !prev[id] }));
+      };
+
+      // Contas fixas (Renda)
+      const handleSaveFixedExpense = (e) => {
+        e.preventDefault();
+        const value = parseFloat(fixedExpenseForm.value) || 0;
+        if (!fixedExpenseForm.name || value <= 0) return;
+        const groupId = fixedExpenseForm.groupId ? parseInt(fixedExpenseForm.groupId) : null;
+
+        if (editingFixedExpenseId) {
+          setFixedExpenses(prev => prev.map(e => (e.id === editingFixedExpenseId ? { ...e, name: fixedExpenseForm.name, value, groupId } : e)));
+        } else {
+          setFixedExpenses(prev => [...prev, { id: Date.now(), name: fixedExpenseForm.name, value, groupId }]);
+        }
+
+        setFixedExpenseForm({ name: "", value: "", groupId: "" });
+        setEditingFixedExpenseId(null);
+        setIsFixedExpenseFormModalOpen(false);
+      };
+
+      const handleOpenEditFixedExpense = (expense) => {
+        setEditingFixedExpenseId(expense.id);
+        setFixedExpenseForm({
+          name: expense.name,
+          value: expense.value.toString(),
+          groupId: expense.groupId != null ? expense.groupId.toString() : "",
+        });
+        setIsFixedExpenseFormModalOpen(true);
+      };
+
+      const handleDeleteFixedExpense = (id) => {
+        if (!confirm("Excluir esta conta fixa?")) return;
+        setFixedExpenses(prev => prev.filter(e => e.id !== id));
+      };
+
       // Ajuste manual do saldo da carteira
       const handleSaveWalletEdit = (e) => {
         e.preventDefault();
@@ -836,7 +983,12 @@
 
       // Backup: baixa um arquivo .json com todos os dados do app
       const handleExportBackup = () => {
-        const backup = { version: 1, exportedAt: new Date().toISOString(), wallet, shifts, expenses, debts, groups, weeklyGoal };
+        const backup = {
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          wallet, shifts, expenses, debts, groups, weeklyGoal,
+          monthlyIncome, fixedExpenseGroups, fixedExpenses
+        };
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -865,6 +1017,9 @@
             if (Array.isArray(data.debts)) setDebts(data.debts);
             if (Array.isArray(data.groups)) setGroups(data.groups);
             if (typeof data.weeklyGoal === "number") setWeeklyGoal(data.weeklyGoal);
+            if (typeof data.monthlyIncome === "number") setMonthlyIncome(data.monthlyIncome);
+            if (Array.isArray(data.fixedExpenseGroups)) setFixedExpenseGroups(data.fixedExpenseGroups);
+            if (Array.isArray(data.fixedExpenses)) setFixedExpenses(data.fixedExpenses);
             alert("Backup restaurado com sucesso!");
             setIsBackupModalOpen(false);
           } catch (err) {
@@ -937,7 +1092,17 @@
 
       return (
         <div className="max-w-md mx-auto min-h-screen bg-black text-white p-4 space-y-6">
-          
+
+          {/* BOTÃO RENDA: bem no topo, acima de tudo */}
+          <div className="flex justify-end -mb-2">
+            <button
+              onClick={() => setIsIncomeModalOpen(true)}
+              className="text-[11px] bg-zinc-900 hover:bg-zinc-800 text-emerald-400 border border-zinc-800 px-2.5 py-1 rounded-full flex items-center gap-1 transition active:scale-95"
+            >
+              <Icon name="wallet" size={11} /> Renda
+            </button>
+          </div>
+
           {/* TOPO: Carteira */}
           <header className="bg-zinc-950 border border-zinc-800/80 p-4 rounded-2xl">
             <div className="flex justify-between items-center mb-3">
@@ -2151,6 +2316,331 @@
               </div>
             );
           })()}
+
+          {/* MODAL: RENDA */}
+          {isIncomeModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl max-h-[88vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="wallet" size={18} className="text-emerald-400" /> Renda Mensal
+                  </h3>
+                  <button onClick={() => setIsIncomeModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">Renda</span>
+                      <button
+                        onClick={() => {
+                          setIncomeEditValue(monthlyIncome.toFixed(2));
+                          setIsIncomeEditModalOpen(true);
+                        }}
+                        className="text-zinc-500 hover:text-sky-400 transition"
+                        title="Ajustar renda mensal"
+                      >
+                        <Icon name="pencil" size={11} />
+                      </button>
+                    </div>
+                    <div className="text-lg font-extrabold text-white">
+                      R$ {monthlyIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3">
+                    <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold block">Saldo</span>
+                    <div className={`text-lg font-extrabold ${incomeBalance >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      R$ {incomeBalance.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-zinc-500 mb-3">
+                  Contas fixas do mês: R$ {totalFixedExpenses.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <button
+                    onClick={() => {
+                      setEditingFixedExpenseId(null);
+                      setFixedExpenseForm({
+                        name: "",
+                        value: "",
+                        groupId: fixedExpenseGroups[0] ? fixedExpenseGroups[0].id.toString() : ""
+                      });
+                      setIsFixedExpenseFormModalOpen(true);
+                    }}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Icon name="plus" size={14} /> Nova Conta
+                  </button>
+                  <button
+                    onClick={() => setIsFixedExpenseGroupsModalOpen(true)}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-sky-400 border border-zinc-700 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Icon name="layers" size={14} /> Categorias
+                  </button>
+                </div>
+
+                <div className="space-y-3 overflow-y-auto pr-1 flex-1">
+                  {fixedExpenseGroupsView.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-6">Nenhuma conta fixa cadastrada ainda.</p>
+                  )}
+                  {fixedExpenseGroupsView.map(section => {
+                    const isCollapsed = !!collapsedFixedExpenseGroups[section.id];
+                    return (
+                      <div key={section.id} className="space-y-2">
+                        <button
+                          onClick={() => toggleFixedExpenseGroupCollapse(section.id)}
+                          className="w-full flex items-center justify-between gap-2 bg-zinc-900/70 border border-zinc-800 rounded-xl px-3 py-2"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} size={14} className="text-zinc-500 shrink-0" />
+                            <span className={`text-xs font-bold truncate ${section.isUngrouped ? "text-zinc-400" : "text-white"}`}>
+                              {section.name}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-zinc-400 shrink-0">
+                            R$ {section.total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </button>
+
+                        {!isCollapsed && (
+                          <div className="space-y-2 pl-1">
+                            {section.items.map(item => (
+                              <div
+                                key={item.id}
+                                className="bg-zinc-950 border border-zinc-800 p-3 rounded-2xl flex justify-between items-center"
+                              >
+                                <div>
+                                  <span className="text-xs font-bold text-white block">{item.name}</span>
+                                  <span className="text-[11px] text-zinc-400">
+                                    R$ {item.value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleOpenEditFixedExpense(item)}
+                                    className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                                    title="Editar conta"
+                                  >
+                                    <Icon name="pencil" size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteFixedExpense(item.id)}
+                                    className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                                    title="Excluir conta"
+                                  >
+                                    <Icon name="trash-2" size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: AJUSTAR RENDA MENSAL */}
+          {isIncomeEditModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">Ajustar Renda Mensal</h3>
+                  <button onClick={() => setIsIncomeEditModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleSaveIncomeEdit} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Renda Mensal (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      autoFocus
+                      value={incomeEditValue}
+                      onChange={e => setIncomeEditValue(e.target.value)}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
+                  >
+                    Salvar Renda
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: CATEGORIAS DAS CONTAS FIXAS */}
+          {isFixedExpenseGroupsModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl max-h-[85vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2">
+                    <Icon name="layers" size={18} className="text-sky-400" /> Categorias
+                  </h3>
+                  <button
+                    onClick={() => { setIsFixedExpenseGroupsModalOpen(false); handleCancelEditFixedExpenseGroup(); }}
+                    className="text-zinc-400 hover:text-white"
+                  >
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 mb-3">
+                  Separe as contas fixas em blocos (ex: Casa, Assinaturas, Transporte).
+                </p>
+
+                <form onSubmit={handleSaveFixedExpenseGroup} className="flex items-center gap-2 mb-3">
+                  <input
+                    type="text"
+                    required
+                    placeholder="Nome da categoria"
+                    value={fixedExpenseGroupForm.name}
+                    onChange={e => setFixedExpenseGroupForm({ name: e.target.value })}
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-sky-400"
+                  />
+                  <button
+                    type="submit"
+                    className="bg-sky-500 hover:bg-sky-600 text-black font-bold p-2.5 rounded-xl active:scale-95 transition shrink-0"
+                    title={editingFixedExpenseGroupId ? "Salvar" : "Adicionar"}
+                  >
+                    <Icon name={editingFixedExpenseGroupId ? "check" : "plus"} size={16} />
+                  </button>
+                  {editingFixedExpenseGroupId && (
+                    <button
+                      type="button"
+                      onClick={handleCancelEditFixedExpenseGroup}
+                      className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 p-2.5 rounded-xl active:scale-95 transition shrink-0"
+                      title="Cancelar"
+                    >
+                      <Icon name="x" size={16} />
+                    </button>
+                  )}
+                </form>
+
+                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+                  {fixedExpenseGroups.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-4">Nenhuma categoria criada ainda.</p>
+                  )}
+                  {fixedExpenseGroups.map((group, idx) => (
+                    <div
+                      key={group.id}
+                      className="bg-zinc-950 border border-zinc-800 p-2.5 rounded-xl flex items-center justify-between gap-2"
+                    >
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleMoveFixedExpenseGroup(group.id, -1)}
+                          disabled={idx === 0}
+                          className="p-1 text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500 transition"
+                          title="Mover para cima"
+                        >
+                          <Icon name="chevron-up" size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleMoveFixedExpenseGroup(group.id, 1)}
+                          disabled={idx === fixedExpenseGroups.length - 1}
+                          className="p-1 text-zinc-500 hover:text-white disabled:opacity-20 disabled:hover:text-zinc-500 transition"
+                          title="Mover para baixo"
+                        >
+                          <Icon name="chevron-down" size={14} />
+                        </button>
+                      </div>
+                      <span className="text-xs font-bold text-white flex-1 truncate">{group.name}</span>
+                      <span className="text-[10px] text-zinc-500 shrink-0">
+                        {fixedExpenses.filter(e => e.groupId === group.id).length} contas
+                      </span>
+                      <button
+                        onClick={() => handleOpenEditFixedExpenseGroup(group)}
+                        className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                        title="Editar categoria"
+                      >
+                        <Icon name="pencil" size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFixedExpenseGroup(group.id)}
+                        className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                        title="Excluir categoria"
+                      >
+                        <Icon name="trash-2" size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: NOVA OU EDITAR CONTA FIXA */}
+          {isFixedExpenseFormModalOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">
+                    {editingFixedExpenseId ? "Editar Conta Fixa" : "Nova Conta Fixa"}
+                  </h3>
+                  <button onClick={() => setIsFixedExpenseFormModalOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleSaveFixedExpense} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Nome da Conta</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: Aluguel"
+                      value={fixedExpenseForm.name}
+                      onChange={e => setFixedExpenseForm({ ...fixedExpenseForm, name: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Valor (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      placeholder="Ex: 350.00"
+                      value={fixedExpenseForm.value}
+                      onChange={e => setFixedExpenseForm({ ...fixedExpenseForm, value: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Categoria</label>
+                    <select
+                      value={fixedExpenseForm.groupId}
+                      onChange={e => setFixedExpenseForm({ ...fixedExpenseForm, groupId: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
+                    >
+                      <option value="">Sem Categoria</option>
+                      {fixedExpenseGroups.map(g => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
+                  >
+                    {editingFixedExpenseId ? "Salvar Alterações" : "Criar Conta"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
 
           {/* MODAL: BACKUP E RESTAURAÇÃO */}
           {isBackupModalOpen && (
