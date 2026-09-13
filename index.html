@@ -62,6 +62,12 @@
       return `${h} h ${m} m`;
     };
 
+    const MONTH_FULL_NAMES = [
+      "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+      "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+    ];
+    const WEEKDAY_SHORT_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
     const Icon = ({ name, size = 20, className = "" }) => {
       useEffect(() => {
         if (window.lucide) window.lucide.createIcons();
@@ -200,6 +206,8 @@
       const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
       const [isWalletEditModalOpen, setIsWalletEditModalOpen] = useState(false);
       const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
+      const [isDayDetailModalOpen, setIsDayDetailModalOpen] = useState(false);
+      const [selectedMonthKey, setSelectedMonthKey] = useState(null);
       const [isPartialPayModalOpen, setIsPartialPayModalOpen] = useState(false);
       const [payingDebtId, setPayingDebtId] = useState(null);
       const [partialPayValue, setPartialPayValue] = useState("");
@@ -855,10 +863,6 @@
           map[monthKey].count += 1;
         });
 
-        const monthFullNames = [
-          "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-          "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-        ];
         const maxIncome = Math.max(...Object.values(map).map(v => v.income), 0);
 
         return Object.entries(map)
@@ -866,13 +870,44 @@
             const [year, month] = key.split("-").map(Number);
             return {
               key,
-              label: `${monthFullNames[month - 1]} de ${year}`,
+              label: `${MONTH_FULL_NAMES[month - 1]} de ${year}`,
               maxIncome,
               ...vals
             };
           })
           .sort((a, b) => b.key.localeCompare(a.key));
       }, [shifts]);
+
+      // Total ganho por dia dentro do mês selecionado no Dashboard Mensal
+      const dailyTotalsForSelectedMonth = useMemo(() => {
+        if (!selectedMonthKey) return [];
+
+        const map = {};
+        shifts.forEach(s => {
+          if (s.date.slice(0, 7) !== selectedMonthKey) return;
+          if (!map[s.date]) map[s.date] = { income: 0, hours: 0, km: 0, trips: 0, count: 0 };
+          map[s.date].income += s.income;
+          map[s.date].hours += s.hours;
+          map[s.date].km += s.km;
+          map[s.date].trips += s.trips;
+          map[s.date].count += 1;
+        });
+
+        const maxIncome = Math.max(...Object.values(map).map(v => v.income), 0);
+
+        return Object.entries(map)
+          .map(([dateStr, vals]) => {
+            const [year, month, day] = dateStr.split("-").map(Number);
+            const dateObj = new Date(year, month - 1, day);
+            return {
+              key: dateStr,
+              label: `${day} de ${MONTH_FULL_NAMES[month - 1]} (${WEEKDAY_SHORT_NAMES[dateObj.getDay()]})`,
+              maxIncome,
+              ...vals
+            };
+          })
+          .sort((a, b) => b.key.localeCompare(a.key));
+      }, [shifts, selectedMonthKey]);
 
       return (
         <div className="max-w-md mx-auto min-h-screen bg-black text-white p-4 space-y-6">
@@ -2082,7 +2117,15 @@
                   {monthlyTotals.map(month => {
                     const barPercent = month.maxIncome > 0 ? Math.max(4, Math.round((month.income / month.maxIncome) * 100)) : 0;
                     return (
-                      <div key={month.key} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5">
+                      <button
+                        key={month.key}
+                        onClick={() => {
+                          setSelectedMonthKey(month.key);
+                          setIsMonthlyModalOpen(false);
+                          setIsDayDetailModalOpen(true);
+                        }}
+                        className="w-full text-left bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5 hover:border-zinc-700 active:scale-[0.99] transition"
+                      >
                         <div className="flex justify-between items-baseline mb-1.5">
                           <span className="text-xs font-bold text-zinc-200">{month.label}</span>
                           <span className="text-lg font-extrabold text-amber-400">
@@ -2113,6 +2156,81 @@
                           <div>
                             <p className="text-[10px] text-zinc-500">Km</p>
                             <p className="text-xs font-bold text-white">{month.km}</p>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: DETALHE DIÁRIO DO MÊS SELECIONADO */}
+          {isDayDetailModalOpen && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-5 shadow-2xl max-h-[88vh] flex flex-col">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white flex items-center gap-2 min-w-0">
+                    <button
+                      onClick={() => {
+                        setIsDayDetailModalOpen(false);
+                        setIsMonthlyModalOpen(true);
+                      }}
+                      className="text-zinc-400 hover:text-white -ml-1 p-1 shrink-0"
+                    >
+                      <Icon name="chevron-left" size={18} />
+                    </button>
+                    <span className="truncate">
+                      {monthlyTotals.find(m => m.key === selectedMonthKey)?.label || "Detalhe do Mês"}
+                    </span>
+                  </h3>
+                  <button
+                    onClick={() => { setIsDayDetailModalOpen(false); setSelectedMonthKey(null); }}
+                    className="text-zinc-400 hover:text-white shrink-0"
+                  >
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+
+                <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+                  {dailyTotalsForSelectedMonth.length === 0 && (
+                    <p className="text-xs text-zinc-500 text-center py-6">Nenhuma diária neste mês.</p>
+                  )}
+                  {dailyTotalsForSelectedMonth.map(day => {
+                    const barPercent = day.maxIncome > 0 ? Math.max(4, Math.round((day.income / day.maxIncome) * 100)) : 0;
+                    return (
+                      <div key={day.key} className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5">
+                        <div className="flex justify-between items-baseline mb-1.5">
+                          <span className="text-xs font-bold text-zinc-200">{day.label}</span>
+                          <span className="text-lg font-extrabold text-amber-400">
+                            R$ {day.income.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+
+                        <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden mb-2.5">
+                          <div
+                            className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full transition-all duration-500"
+                            style={{ width: `${barPercent}%` }}
+                          ></div>
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-1 text-center pt-2 border-t border-zinc-800/60">
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Turnos</p>
+                            <p className="text-xs font-bold text-white">{day.count}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Online</p>
+                            <p className="text-xs font-bold text-white">{formatHoursMinutes(day.hours)}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Viagens</p>
+                            <p className="text-xs font-bold text-white">{day.trips}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-zinc-500">Km</p>
+                            <p className="text-xs font-bold text-white">{day.km}</p>
                           </div>
                         </div>
                       </div>
