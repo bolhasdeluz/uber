@@ -885,12 +885,13 @@
         const map = {};
         shifts.forEach(s => {
           if (s.date.slice(0, 7) !== selectedMonthKey) return;
-          if (!map[s.date]) map[s.date] = { income: 0, hours: 0, km: 0, trips: 0, count: 0 };
+          if (!map[s.date]) map[s.date] = { income: 0, hours: 0, km: 0, trips: 0, count: 0, shiftsList: [] };
           map[s.date].income += s.income;
           map[s.date].hours += s.hours;
           map[s.date].km += s.km;
           map[s.date].trips += s.trips;
           map[s.date].count += 1;
+          map[s.date].shiftsList.push(s);
         });
 
         const maxIncome = Math.max(...Object.values(map).map(v => v.income), 0);
@@ -1352,7 +1353,7 @@
 
           {/* MODAL: REGISTRAR TURNO + PAGAR METAS */}
           {isShiftModalOpen && (
-            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 overflow-y-auto">
               <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl my-auto max-h-[90vh] flex flex-col">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-bold text-base text-white flex items-center gap-2">
@@ -2232,6 +2233,44 @@
                             <p className="text-[10px] text-zinc-500">Km</p>
                             <p className="text-xs font-bold text-white">{day.km}</p>
                           </div>
+                        </div>
+
+                        <div className="space-y-1.5 mt-3 pt-3 border-t border-zinc-800/60">
+                          {day.shiftsList.map(shift => (
+                            <div
+                              key={shift.id}
+                              className="bg-zinc-900 border border-zinc-800/80 p-2 rounded-xl flex justify-between items-center"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
+                                    (shift.platform || "uber") === "99" ? "bg-orange-500 text-black" : "bg-white text-black"
+                                  }`}
+                                >
+                                  {(shift.platform || "uber") === "99" ? "99" : "Uber"}
+                                </span>
+                                <span className="text-xs font-bold text-zinc-200">
+                                  R$ {shift.income.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleOpenEditShift(shift)}
+                                  className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                                  title="Editar turno"
+                                >
+                                  <Icon name="pencil" size={13} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteShift(shift.id)}
+                                  className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                                  title="Excluir turno"
+                                >
+                                  <Icon name="trash-2" size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     );
