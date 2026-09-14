@@ -1354,7 +1354,7 @@
               {weekData.maxDailyIncome > 0 && `R$ ${weekData.maxDailyIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
             </div>
 
-            {/* Gráfico de Barras */}
+            {/* Gráfico de Barras (empilhado por plataforma: Uber cinza, 99 laranja, Bônus dourado) */}
             <div className="relative pt-4 pb-2 border-b border-dashed border-zinc-700">
               <div className="h-36 flex items-end justify-between gap-1.5 px-1">
                 {weekData.days.map((day, idx) => {
@@ -1362,22 +1362,46 @@
                   const isZero = day.income === 0;
                   const heightPercent = weekData.maxDailyIncome > 0 ? (day.income / weekData.maxDailyIncome) * 100 : 0;
 
+                  const platformIncomes = { uber: 0, "99": 0, bonus: 0 };
+                  day.shiftsList.forEach(s => {
+                    const key = platformIncomes.hasOwnProperty(s.platform) ? s.platform : "uber";
+                    platformIncomes[key] += s.income;
+                  });
+                  const segments = [
+                    { key: "bonus", income: platformIncomes.bonus, className: "bg-gradient-to-r from-amber-300 to-yellow-500" },
+                    { key: "99", income: platformIncomes["99"], className: "bg-orange-500" },
+                    { key: "uber", income: platformIncomes.uber, className: "bg-zinc-400" },
+                  ];
+
                   return (
                     <div
                       key={day.dateStr}
                       onClick={() => setSelectedDayIndex(isSelected ? null : idx)}
                       className="flex-1 h-full flex flex-col justify-end items-center cursor-pointer group"
                     >
-                      <div
-                        style={{ height: isZero ? "4px" : `${Math.max(8, heightPercent)}%` }}
-                        className={`w-full rounded-t-sm transition-all duration-200 ${
-                          isSelected
-                            ? "bg-sky-400"
-                            : isZero
-                            ? "bg-zinc-800 group-hover:bg-zinc-700"
-                            : "bg-sky-600 group-hover:bg-sky-500"
-                        }`}
-                      ></div>
+                      {isZero ? (
+                        <div
+                          style={{ height: "4px" }}
+                          className={`w-full rounded-t-sm transition-all duration-200 ${
+                            isSelected ? "bg-sky-400" : "bg-zinc-800 group-hover:bg-zinc-700"
+                          }`}
+                        ></div>
+                      ) : (
+                        <div
+                          style={{ height: `${Math.max(8, heightPercent)}%` }}
+                          className={`w-full flex flex-col rounded-t-sm overflow-hidden transition-all duration-200 ${
+                            isSelected ? "ring-2 ring-sky-400" : "group-hover:ring-1 group-hover:ring-zinc-500"
+                          }`}
+                        >
+                          {segments.map(seg => seg.income > 0 && (
+                            <div
+                              key={seg.key}
+                              className={seg.className}
+                              style={{ height: `${(seg.income / day.income) * 100}%` }}
+                            ></div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
