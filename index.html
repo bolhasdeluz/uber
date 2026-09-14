@@ -68,6 +68,13 @@
     ];
     const WEEKDAY_SHORT_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
+    const PLATFORM_INFO = {
+      uber: { label: "Uber", badgeClass: "bg-white text-black" },
+      "99": { label: "99", badgeClass: "bg-orange-500 text-black" },
+      bonus: { label: "Bônus", badgeClass: "bg-gradient-to-r from-amber-300 to-yellow-500 text-black" }
+    };
+    const getPlatformInfo = (platform) => PLATFORM_INFO[platform] || PLATFORM_INFO.uber;
+
     const Icon = ({ name, size = 20, className = "" }) => {
       useEffect(() => {
         if (window.lucide) window.lucide.createIcons();
@@ -575,7 +582,7 @@
         };
       }, [selectedDayIndex, weekData]);
 
-      // Média de ganhos por hora em cada plataforma (Uber x 99), na semana em exibição
+      // Média de ganhos por hora em cada plataforma (Uber x 99 x Bônus), na semana em exibição
       const platformStats = useMemo(() => {
         const weekShifts = weekData.days.flatMap(d => d.shiftsList);
 
@@ -590,6 +597,7 @@
         return {
           uber: buildPlatformStat("uber"),
           "99": buildPlatformStat("99"),
+          bonus: buildPlatformStat("bonus"),
           hasAnyData: weekShifts.length > 0
         };
       }, [weekData]);
@@ -1392,11 +1400,9 @@
                     >
                       <div className="flex items-center gap-2">
                         <span
-                          className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
-                            (shift.platform || "uber") === "99" ? "bg-orange-500 text-black" : "bg-white text-black"
-                          }`}
+                          className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${getPlatformInfo(shift.platform).badgeClass}`}
                         >
-                          {(shift.platform || "uber") === "99" ? "99" : "Uber"}
+                          {getPlatformInfo(shift.platform).label}
                         </span>
                         <span className="text-xs font-bold text-zinc-200">
                           R$ {shift.income.toFixed(2)}
@@ -1493,7 +1499,7 @@
             )}
           </section>
 
-          {/* GANHOS POR HORA: UBER x 99 */}
+          {/* GANHOS POR HORA: UBER x 99 x BÔNUS */}
           <section className="bg-zinc-950 border border-zinc-800/80 rounded-2xl p-5">
             <h4 className="text-sm font-extrabold tracking-tight uppercase text-zinc-300 flex items-center gap-1.5 mb-1">
               <Icon name="gauge" size={16} className="text-amber-400" /> Ganhos por Hora
@@ -1505,32 +1511,27 @@
             {!platformStats.hasAnyData ? (
               <p className="text-xs text-zinc-500 text-center py-4">Nenhum turno registrado nesta semana ainda.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-white text-black">Uber</span>
-                  </div>
-                  <p className="text-xl font-extrabold text-white">
-                    R$ {platformStats.uber.perHour.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    <span className="text-xs text-zinc-500 font-semibold"> /h</span>
-                  </p>
-                  <p className="text-[11px] text-zinc-500 mt-1">
-                    R$ {platformStats.uber.income.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • {formatHoursMinutes(platformStats.uber.hours)}
-                  </p>
-                </div>
-
-                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-orange-500 text-black">99</span>
-                  </div>
-                  <p className="text-xl font-extrabold text-white">
-                    R$ {platformStats["99"].perHour.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    <span className="text-xs text-zinc-500 font-semibold"> /h</span>
-                  </p>
-                  <p className="text-[11px] text-zinc-500 mt-1">
-                    R$ {platformStats["99"].income.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • {formatHoursMinutes(platformStats["99"].hours)}
-                  </p>
-                </div>
+              <div className="grid grid-cols-3 gap-2">
+                {["uber", "99", "bonus"].map(key => {
+                  const info = getPlatformInfo(key);
+                  const stat = platformStats[key];
+                  return (
+                    <div key={key} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-2.5">
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${info.badgeClass}`}>
+                          {info.label}
+                        </span>
+                      </div>
+                      <p className="text-base font-extrabold text-white leading-tight">
+                        R$ {stat.perHour.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <span className="text-[10px] text-zinc-500 font-semibold"> /h</span>
+                      </p>
+                      <p className="text-[10px] text-zinc-500 mt-1">
+                        R$ {stat.income.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} • {formatHoursMinutes(stat.hours)}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -1552,7 +1553,7 @@
                 <form onSubmit={handleSaveShift} className="space-y-3 overflow-y-auto pr-1">
                   <div>
                     <label className="text-[11px] text-zinc-400 block mb-1">Plataforma</label>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
                         onClick={() => setShiftForm({ ...shiftForm, platform: "uber" })}
@@ -1574,6 +1575,17 @@
                         }`}
                       >
                         99
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShiftForm({ ...shiftForm, platform: "bonus" })}
+                        className={`py-2 rounded-xl text-xs font-bold border transition ${
+                          shiftForm.platform === "bonus"
+                            ? "bg-gradient-to-r from-amber-300 to-yellow-500 text-black border-amber-400"
+                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                        }`}
+                      >
+                        Bônus
                       </button>
                     </div>
                   </div>
@@ -2867,11 +2879,9 @@
                             >
                               <div className="flex items-center gap-2">
                                 <span
-                                  className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
-                                    (shift.platform || "uber") === "99" ? "bg-orange-500 text-black" : "bg-white text-black"
-                                  }`}
+                                  className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${getPlatformInfo(shift.platform).badgeClass}`}
                                 >
-                                  {(shift.platform || "uber") === "99" ? "99" : "Uber"}
+                                  {getPlatformInfo(shift.platform).label}
                                 </span>
                                 <span className="text-xs font-bold text-zinc-200">
                                   R$ {shift.income.toFixed(2)}
