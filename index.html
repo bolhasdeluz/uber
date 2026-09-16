@@ -54,16 +54,22 @@
       return d.toISOString().split("T")[0];
     };
 
+    const emptyShiftEntry = () => ({ income: "", hours: "", km: "", trips: "" });
+
     const emptyShiftForm = (dateStr) => ({
       date: dateStr,
+      // usados apenas ao editar um turno já existente (um só por vez)
       platform: "uber",
       income: "",
-      incomeUber: "",
-      income99: "",
-      incomeBonus: "",
       hours: "",
       km: "",
       trips: "",
+      // usados ao registrar um turno novo: um bloco por plataforma
+      entries: {
+        uber: emptyShiftEntry(),
+        "99": emptyShiftEntry(),
+        bonus: emptyShiftEntry(),
+      },
     });
 
     const formatHoursMinutes = (decimalHours) => {
@@ -622,23 +628,30 @@
       // Salvar Turno com rastreio de alocação
       const handleSaveShift = (e) => {
         e.preventDefault();
-        const hours = parseFloat(shiftForm.hours) || 0;
-        const km = parseFloat(shiftForm.km) || 0;
-        const trips = parseInt(shiftForm.trips) || 0;
 
         if (editingShiftId) {
           const income = parseFloat(shiftForm.income) || 0;
           if (income <= 0) return;
+          const hours = parseFloat(shiftForm.hours) || 0;
+          const km = parseFloat(shiftForm.km) || 0;
+          const trips = parseInt(shiftForm.trips) || 0;
           const oldShift = shifts.find(s => s.id === editingShiftId);
           const diffIncome = income - (oldShift ? oldShift.income : 0);
           setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, platform: shiftForm.platform, income, hours, km, trips } : s)));
           setWallet(prev => Math.max(0, prev + diffIncome));
         } else {
-          const entries = [
-            { platform: "uber", income: parseFloat(shiftForm.incomeUber) || 0 },
-            { platform: "99", income: parseFloat(shiftForm.income99) || 0 },
-            { platform: "bonus", income: parseFloat(shiftForm.incomeBonus) || 0 },
-          ].filter(entry => entry.income > 0);
+          const entries = ["uber", "99", "bonus"]
+            .map(platformKey => {
+              const entry = shiftForm.entries[platformKey];
+              return {
+                platform: platformKey,
+                income: parseFloat(entry.income) || 0,
+                hours: parseFloat(entry.hours) || 0,
+                km: parseFloat(entry.km) || 0,
+                trips: parseInt(entry.trips) || 0,
+              };
+            })
+            .filter(entry => entry.income > 0);
 
           if (entries.length === 0) {
             alert("Preencha o valor de pelo menos um app.");
@@ -652,9 +665,9 @@
             date: shiftForm.date,
             platform: entry.platform,
             income: entry.income,
-            hours: idx === 0 ? hours : 0,
-            km: idx === 0 ? km : 0,
-            trips: idx === 0 ? trips : 0,
+            hours: entry.hours,
+            km: entry.km,
+            trips: entry.trips,
             allocations: {}
           }));
           setShifts(prev => [...newShifts, ...prev]);
@@ -664,6 +677,13 @@
         setIsShiftModalOpen(false);
         setEditingShiftId(null);
         setShiftForm(emptyShiftForm(getTodayLocalDate()));
+      };
+
+      const updateShiftEntry = (platformKey, field, value) => {
+        setShiftForm(prev => ({
+          ...prev,
+          entries: { ...prev.entries, [platformKey]: { ...prev.entries[platformKey], [field]: value } }
+        }));
       };
 
       const handleOpenEditShift = (shift) => {
@@ -1669,6 +1689,41 @@
                           className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
                         />
                       </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[10px] text-zinc-400 block mb-1">Horas</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Ex: 6.5"
+                            value={shiftForm.hours}
+                            onChange={e => setShiftForm({ ...shiftForm, hours: e.target.value })}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 block mb-1">Km</label>
+                          <input
+                            type="number"
+                            step="1"
+                            placeholder="Ex: 95"
+                            value={shiftForm.km}
+                            onChange={e => setShiftForm({ ...shiftForm, km: e.target.value })}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-400 block mb-1">Viagens</label>
+                          <input
+                            type="number"
+                            placeholder="Ex: 14"
+                            value={shiftForm.trips}
+                            onChange={e => setShiftForm({ ...shiftForm, trips: e.target.value })}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                          />
+                        </div>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -1684,81 +1739,74 @@
                       </div>
 
                       <div>
-                        <label className="text-[11px] text-zinc-400 block mb-1">Quanto Fez em Cada App (R$)</label>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Quanto Fez em Cada App</label>
                         <p className="text-[10px] text-zinc-500 mb-2">Preencha um ou mais. Deixe em branco o que não usou hoje.</p>
                         <div className="space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-extrabold px-2 py-2 rounded-lg bg-white text-black w-14 text-center shrink-0">Uber</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="R$ 0,00"
-                              value={shiftForm.incomeUber}
-                              onChange={e => setShiftForm({ ...shiftForm, incomeUber: e.target.value })}
-                              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-extrabold px-2 py-2 rounded-lg bg-orange-500 text-black w-14 text-center shrink-0">99</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="R$ 0,00"
-                              value={shiftForm.income99}
-                              onChange={e => setShiftForm({ ...shiftForm, income99: e.target.value })}
-                              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-extrabold px-2 py-2 rounded-lg bg-gradient-to-r from-amber-300 to-yellow-500 text-black w-14 text-center shrink-0">Bônus</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              placeholder="R$ 0,00"
-                              value={shiftForm.incomeBonus}
-                              onChange={e => setShiftForm({ ...shiftForm, incomeBonus: e.target.value })}
-                              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                            />
-                          </div>
+                          {[
+                            { key: "uber", label: "Uber", badgeClass: "bg-white text-black" },
+                            { key: "99", label: "99", badgeClass: "bg-orange-500 text-black" },
+                            { key: "bonus", label: "Bônus", badgeClass: "bg-gradient-to-r from-amber-300 to-yellow-500 text-black" },
+                          ].map(platformInfo => {
+                            const entry = shiftForm.entries[platformInfo.key];
+                            const hasIncome = (parseFloat(entry.income) || 0) > 0;
+                            return (
+                              <div key={platformInfo.key} className="bg-zinc-800/40 border border-zinc-700/60 rounded-xl p-2 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[10px] font-extrabold px-2 py-2 rounded-lg w-14 text-center shrink-0 ${platformInfo.badgeClass}`}>
+                                    {platformInfo.label}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    placeholder="R$ 0,00"
+                                    value={entry.income}
+                                    onChange={e => updateShiftEntry(platformInfo.key, "income", e.target.value)}
+                                    className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                                  />
+                                </div>
+                                {hasIncome && (
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div>
+                                      <label className="text-[10px] text-zinc-400 block mb-1">Horas</label>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="Ex: 6.5"
+                                        value={entry.hours}
+                                        onChange={e => updateShiftEntry(platformInfo.key, "hours", e.target.value)}
+                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] text-zinc-400 block mb-1">Km</label>
+                                      <input
+                                        type="number"
+                                        step="1"
+                                        placeholder="Ex: 95"
+                                        value={entry.km}
+                                        onChange={e => updateShiftEntry(platformInfo.key, "km", e.target.value)}
+                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-[10px] text-zinc-400 block mb-1">Viagens</label>
+                                      <input
+                                        type="number"
+                                        placeholder="Ex: 14"
+                                        value={entry.trips}
+                                        onChange={e => updateShiftEntry(platformInfo.key, "trips", e.target.value)}
+                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </>
                   )}
-
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="text-[10px] text-zinc-400 block mb-1">Horas</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="Ex: 6.5"
-                        value={shiftForm.hours}
-                        onChange={e => setShiftForm({ ...shiftForm, hours: e.target.value })}
-                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-zinc-400 block mb-1">Km</label>
-                      <input
-                        type="number"
-                        step="1"
-                        placeholder="Ex: 95"
-                        value={shiftForm.km}
-                        onChange={e => setShiftForm({ ...shiftForm, km: e.target.value })}
-                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-zinc-400 block mb-1">Viagens</label>
-                      <input
-                        type="number"
-                        placeholder="Ex: 14"
-                        value={shiftForm.trips}
-                        onChange={e => setShiftForm({ ...shiftForm, trips: e.target.value })}
-                        className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-2 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                  </div>
 
                   <button
                     type="submit"
