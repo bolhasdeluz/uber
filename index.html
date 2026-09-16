@@ -54,6 +54,18 @@
       return d.toISOString().split("T")[0];
     };
 
+    const emptyShiftForm = (dateStr) => ({
+      date: dateStr,
+      platform: "uber",
+      income: "",
+      incomeUber: "",
+      income99: "",
+      incomeBonus: "",
+      hours: "",
+      km: "",
+      trips: "",
+    });
+
     const formatHoursMinutes = (decimalHours) => {
       if (!decimalHours || decimalHours <= 0) return "0 h 0 m";
       const totalMinutes = Math.round(decimalHours * 60);
@@ -254,14 +266,7 @@
       const [editingGroupId, setEditingGroupId] = useState(null);
       const [collapsedGroups, setCollapsedGroups] = useState({});
 
-      const [shiftForm, setShiftForm] = useState({
-        date: getTodayLocalDate(),
-        platform: "uber",
-        income: "",
-        hours: "",
-        km: "",
-        trips: "",
-      });
+      const [shiftForm, setShiftForm] = useState(() => emptyShiftForm(getTodayLocalDate()));
 
       const [expenseForm, setExpenseForm] = useState({ amount: "", description: "", date: getTodayLocalDate() });
       const [debtForm, setDebtForm] = useState({
@@ -617,39 +622,54 @@
       // Salvar Turno com rastreio de alocação
       const handleSaveShift = (e) => {
         e.preventDefault();
-        const income = parseFloat(shiftForm.income) || 0;
         const hours = parseFloat(shiftForm.hours) || 0;
         const km = parseFloat(shiftForm.km) || 0;
         const trips = parseInt(shiftForm.trips) || 0;
 
-        if (income <= 0) return;
-
         if (editingShiftId) {
+          const income = parseFloat(shiftForm.income) || 0;
+          if (income <= 0) return;
           const oldShift = shifts.find(s => s.id === editingShiftId);
           const diffIncome = income - (oldShift ? oldShift.income : 0);
           setShifts(prev => prev.map(s => (s.id === editingShiftId ? { ...s, date: shiftForm.date, platform: shiftForm.platform, income, hours, km, trips } : s)));
           setWallet(prev => Math.max(0, prev + diffIncome));
         } else {
-          setShifts([{ id: Date.now(), date: shiftForm.date, platform: shiftForm.platform, income, hours, km, trips, allocations: {} }, ...shifts]);
-          setWallet(prev => Math.max(0, prev + income));
+          const entries = [
+            { platform: "uber", income: parseFloat(shiftForm.incomeUber) || 0 },
+            { platform: "99", income: parseFloat(shiftForm.income99) || 0 },
+            { platform: "bonus", income: parseFloat(shiftForm.incomeBonus) || 0 },
+          ].filter(entry => entry.income > 0);
+
+          if (entries.length === 0) {
+            alert("Preencha o valor de pelo menos um app.");
+            return;
+          }
+
+          const totalIncome = entries.reduce((acc, entry) => acc + entry.income, 0);
+          const baseId = Date.now();
+          const newShifts = entries.map((entry, idx) => ({
+            id: baseId + idx,
+            date: shiftForm.date,
+            platform: entry.platform,
+            income: entry.income,
+            hours: idx === 0 ? hours : 0,
+            km: idx === 0 ? km : 0,
+            trips: idx === 0 ? trips : 0,
+            allocations: {}
+          }));
+          setShifts(prev => [...newShifts, ...prev]);
+          setWallet(prev => Math.max(0, prev + totalIncome));
         }
 
         setIsShiftModalOpen(false);
         setEditingShiftId(null);
-        setShiftForm({
-          date: getTodayLocalDate(),
-          platform: "uber",
-          income: "",
-          hours: "",
-          km: "",
-          trips: "",
-        });
+        setShiftForm(emptyShiftForm(getTodayLocalDate()));
       };
 
       const handleOpenEditShift = (shift) => {
         setEditingShiftId(shift.id);
         setShiftForm({
-          date: shift.date,
+          ...emptyShiftForm(shift.date),
           platform: shift.platform || "uber",
           income: shift.income.toString(),
           hours: shift.hours ? shift.hours.toString() : "",
@@ -661,14 +681,7 @@
 
       const handleOpenNewShiftForDate = (dateStr) => {
         setEditingShiftId(null);
-        setShiftForm({
-          date: dateStr,
-          platform: "uber",
-          income: "",
-          hours: "",
-          km: "",
-          trips: "",
-        });
+        setShiftForm(emptyShiftForm(dateStr));
         setIsShiftModalOpen(true);
       };
 
@@ -1592,68 +1605,125 @@
                 </div>
 
                 <form onSubmit={handleSaveShift} className="space-y-3 overflow-y-auto pr-1">
-                  <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Plataforma</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShiftForm({ ...shiftForm, platform: "uber" })}
-                        className={`py-2 rounded-xl text-xs font-bold border transition ${
-                          shiftForm.platform === "uber"
-                            ? "bg-white text-black border-white"
-                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                        }`}
-                      >
-                        Uber
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShiftForm({ ...shiftForm, platform: "99" })}
-                        className={`py-2 rounded-xl text-xs font-bold border transition ${
-                          shiftForm.platform === "99"
-                            ? "bg-orange-500 text-black border-orange-500"
-                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                        }`}
-                      >
-                        99
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShiftForm({ ...shiftForm, platform: "bonus" })}
-                        className={`py-2 rounded-xl text-xs font-bold border transition ${
-                          shiftForm.platform === "bonus"
-                            ? "bg-gradient-to-r from-amber-300 to-yellow-500 text-black border-amber-400"
-                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                        }`}
-                      >
-                        Bônus
-                      </button>
-                    </div>
-                  </div>
+                  {editingShiftId ? (
+                    <>
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Plataforma</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShiftForm({ ...shiftForm, platform: "uber" })}
+                            className={`py-2 rounded-xl text-xs font-bold border transition ${
+                              shiftForm.platform === "uber"
+                                ? "bg-white text-black border-white"
+                                : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                            }`}
+                          >
+                            Uber
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShiftForm({ ...shiftForm, platform: "99" })}
+                            className={`py-2 rounded-xl text-xs font-bold border transition ${
+                              shiftForm.platform === "99"
+                                ? "bg-orange-500 text-black border-orange-500"
+                                : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                            }`}
+                          >
+                            99
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShiftForm({ ...shiftForm, platform: "bonus" })}
+                            className={`py-2 rounded-xl text-xs font-bold border transition ${
+                              shiftForm.platform === "bonus"
+                                ? "bg-gradient-to-r from-amber-300 to-yellow-500 text-black border-amber-400"
+                                : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                            }`}
+                          >
+                            Bônus
+                          </button>
+                        </div>
+                      </div>
 
-                  <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Data do Turno</label>
-                    <input
-                      type="date"
-                      required
-                      value={shiftForm.date}
-                      onChange={e => setShiftForm({ ...shiftForm, date: e.target.value })}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
-                    />
-                  </div>
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Data do Turno</label>
+                        <input
+                          type="date"
+                          required
+                          value={shiftForm.date}
+                          onChange={e => setShiftForm({ ...shiftForm, date: e.target.value })}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
+                        />
+                      </div>
 
-                  <div>
-                    <label className="text-[11px] text-zinc-400 block mb-1">Faturamento Feito Hoje (R$)*</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      required
-                      placeholder="Ex: 145.50"
-                      value={shiftForm.income}
-                      onChange={e => setShiftForm({ ...shiftForm, income: e.target.value })}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Faturamento Feito Hoje (R$)*</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          required
+                          placeholder="Ex: 145.50"
+                          value={shiftForm.income}
+                          onChange={e => setShiftForm({ ...shiftForm, income: e.target.value })}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Data do Turno</label>
+                        <input
+                          type="date"
+                          required
+                          value={shiftForm.date}
+                          onChange={e => setShiftForm({ ...shiftForm, date: e.target.value })}
+                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400 [color-scheme:dark]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-zinc-400 block mb-1">Quanto Fez em Cada App (R$)</label>
+                        <p className="text-[10px] text-zinc-500 mb-2">Preencha um ou mais. Deixe em branco o que não usou hoje.</p>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-extrabold px-2 py-2 rounded-lg bg-white text-black w-14 text-center shrink-0">Uber</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="R$ 0,00"
+                              value={shiftForm.incomeUber}
+                              onChange={e => setShiftForm({ ...shiftForm, incomeUber: e.target.value })}
+                              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-extrabold px-2 py-2 rounded-lg bg-orange-500 text-black w-14 text-center shrink-0">99</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="R$ 0,00"
+                              value={shiftForm.income99}
+                              onChange={e => setShiftForm({ ...shiftForm, income99: e.target.value })}
+                              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-extrabold px-2 py-2 rounded-lg bg-gradient-to-r from-amber-300 to-yellow-500 text-black w-14 text-center shrink-0">Bônus</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="R$ 0,00"
+                              value={shiftForm.incomeBonus}
+                              onChange={e => setShiftForm({ ...shiftForm, incomeBonus: e.target.value })}
+                              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-400"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   <div className="grid grid-cols-3 gap-2">
                     <div>
