@@ -217,6 +217,16 @@
         return saved ? JSON.parse(saved) : [];
       });
 
+      const [creditCardLimit, setCreditCardLimit] = useState(() => {
+        const saved = localStorage.getItem("rota_cc_limit_master");
+        return saved ? parseFloat(saved) : 0;
+      });
+
+      const [creditCardItems, setCreditCardItems] = useState(() => {
+        const saved = localStorage.getItem("rota_cc_items_master");
+        return saved ? JSON.parse(saved) : [];
+      });
+
       const [weekOffset, setWeekOffset] = useState(0);
       const [selectedDayIndex, setSelectedDayIndex] = useState(null);
 
@@ -238,6 +248,11 @@
       const [editingFixedExpenseGroupId, setEditingFixedExpenseGroupId] = useState(null);
       const [fixedExpenseGroupForm, setFixedExpenseGroupForm] = useState({ name: "" });
       const [collapsedFixedExpenseGroups, setCollapsedFixedExpenseGroups] = useState({});
+      const [isCreditCardLimitEditOpen, setIsCreditCardLimitEditOpen] = useState(false);
+      const [creditCardLimitEditValue, setCreditCardLimitEditValue] = useState("");
+      const [isCreditCardItemFormOpen, setIsCreditCardItemFormOpen] = useState(false);
+      const [editingCreditCardItemId, setEditingCreditCardItemId] = useState(null);
+      const [creditCardItemForm, setCreditCardItemForm] = useState({ name: "", value: "" });
       const [isWalletEditModalOpen, setIsWalletEditModalOpen] = useState(false);
       const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
       const [isDayDetailModalOpen, setIsDayDetailModalOpen] = useState(false);
@@ -280,8 +295,10 @@
         localStorage.setItem("rota_income_master", monthlyIncome.toString());
         localStorage.setItem("rota_income_groups_master", JSON.stringify(fixedExpenseGroups));
         localStorage.setItem("rota_income_expenses_master", JSON.stringify(fixedExpenses));
+        localStorage.setItem("rota_cc_limit_master", creditCardLimit.toString());
+        localStorage.setItem("rota_cc_items_master", JSON.stringify(creditCardItems));
         if (window.lucide) window.lucide.createIcons();
-      }, [wallet, shifts, expenses, debts, groups, weeklyGoal, monthlyIncome, fixedExpenseGroups, fixedExpenses]);
+      }, [wallet, shifts, expenses, debts, groups, weeklyGoal, monthlyIncome, fixedExpenseGroups, fixedExpenses, creditCardLimit, creditCardItems]);
 
       // Correção pontual: restaura/atualiza a lista completa de metas (Casa, Terreiro, Dívidas)
       // com os valores corretos, sem apagar o que já foi pago nem duplicar metas existentes.
@@ -494,6 +511,12 @@
         [fixedExpenses]
       );
       const incomeBalance = monthlyIncome - totalFixedExpenses;
+
+      const creditCardUsed = useMemo(
+        () => creditCardItems.reduce((acc, item) => acc + item.value, 0),
+        [creditCardItems]
+      );
+      const creditCardAvailable = creditCardLimit - creditCardUsed;
 
       const fixedExpenseGroupsView = useMemo(() => {
         const knownGroupIds = new Set(fixedExpenseGroups.map(g => g.id));
@@ -956,6 +979,42 @@
         setFixedExpenses(prev => prev.filter(e => e.id !== id));
       };
 
+      // Cartão de Crédito (limite muda todo mês, previsões são cadastradas manualmente)
+      const handleSaveCreditCardLimit = (e) => {
+        e.preventDefault();
+        const value = parseFloat(creditCardLimitEditValue);
+        if (isNaN(value) || value < 0) return;
+        setCreditCardLimit(value);
+        setIsCreditCardLimitEditOpen(false);
+      };
+
+      const handleSaveCreditCardItem = (e) => {
+        e.preventDefault();
+        const value = parseFloat(creditCardItemForm.value) || 0;
+        if (!creditCardItemForm.name || value <= 0) return;
+
+        if (editingCreditCardItemId) {
+          setCreditCardItems(prev => prev.map(item => (item.id === editingCreditCardItemId ? { ...item, name: creditCardItemForm.name, value } : item)));
+        } else {
+          setCreditCardItems(prev => [...prev, { id: Date.now(), name: creditCardItemForm.name, value }]);
+        }
+
+        setCreditCardItemForm({ name: "", value: "" });
+        setEditingCreditCardItemId(null);
+        setIsCreditCardItemFormOpen(false);
+      };
+
+      const handleOpenEditCreditCardItem = (item) => {
+        setEditingCreditCardItemId(item.id);
+        setCreditCardItemForm({ name: item.name, value: item.value.toString() });
+        setIsCreditCardItemFormOpen(true);
+      };
+
+      const handleDeleteCreditCardItem = (id) => {
+        if (!confirm("Excluir esta previsão do cartão?")) return;
+        setCreditCardItems(prev => prev.filter(item => item.id !== id));
+      };
+
       // Ajuste manual do saldo da carteira
       const handleSaveWalletEdit = (e) => {
         e.preventDefault();
@@ -971,7 +1030,8 @@
           version: 1,
           exportedAt: new Date().toISOString(),
           wallet, shifts, expenses, debts, groups, weeklyGoal,
-          monthlyIncome, fixedExpenseGroups, fixedExpenses
+          monthlyIncome, fixedExpenseGroups, fixedExpenses,
+          creditCardLimit, creditCardItems
         };
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -1004,6 +1064,8 @@
             if (typeof data.monthlyIncome === "number") setMonthlyIncome(data.monthlyIncome);
             if (Array.isArray(data.fixedExpenseGroups)) setFixedExpenseGroups(data.fixedExpenseGroups);
             if (Array.isArray(data.fixedExpenses)) setFixedExpenses(data.fixedExpenses);
+            if (typeof data.creditCardLimit === "number") setCreditCardLimit(data.creditCardLimit);
+            if (Array.isArray(data.creditCardItems)) setCreditCardItems(data.creditCardItems);
             alert("Backup restaurado com sucesso!");
             setIsBackupModalOpen(false);
           } catch (err) {
@@ -2316,6 +2378,91 @@
                 </div>
 
                 <div className="space-y-3 overflow-y-auto pr-1 flex-1">
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3.5">
+                    <div className="flex justify-between items-center mb-2">
+                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Icon name="credit-card" size={14} className="text-violet-400" /> Cartão de Crédito
+                      </h4>
+                      <button
+                        onClick={() => {
+                          setEditingCreditCardItemId(null);
+                          setCreditCardItemForm({ name: "", value: "" });
+                          setIsCreditCardItemFormOpen(true);
+                        }}
+                        className="text-zinc-400 hover:text-amber-400 transition"
+                        title="Nova previsão"
+                      >
+                        <Icon name="plus" size={16} />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">Limite</span>
+                          <button
+                            onClick={() => {
+                              setCreditCardLimitEditValue(creditCardLimit.toFixed(2));
+                              setIsCreditCardLimitEditOpen(true);
+                            }}
+                            className="text-zinc-500 hover:text-sky-400 transition"
+                            title="Ajustar limite do cartão"
+                          >
+                            <Icon name="pencil" size={10} />
+                          </button>
+                        </div>
+                        <div className="text-sm font-extrabold text-white">
+                          R$ {creditCardLimit.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold block">Disponível</span>
+                        <div className={`text-sm font-extrabold ${creditCardAvailable >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                          R$ {creditCardAvailable.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-zinc-500 mb-2">
+                      Previsto para sair este mês: R$ {creditCardUsed.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+
+                    <div className="space-y-1.5">
+                      {creditCardItems.length === 0 && (
+                        <p className="text-[11px] text-zinc-500 text-center py-2">Nenhuma previsão cadastrada ainda.</p>
+                      )}
+                      {creditCardItems.map(item => (
+                        <div
+                          key={item.id}
+                          className="bg-zinc-900 border border-zinc-800/80 p-2 rounded-xl flex justify-between items-center"
+                        >
+                          <div>
+                            <span className="text-xs font-bold text-white block">{item.name}</span>
+                            <span className="text-[11px] text-zinc-400">
+                              R$ {item.value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleOpenEditCreditCardItem(item)}
+                              className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
+                              title="Editar previsão"
+                            >
+                              <Icon name="pencil" size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCreditCardItem(item.id)}
+                              className="p-1.5 text-zinc-400 hover:text-rose-400 transition"
+                              title="Excluir previsão"
+                            >
+                              <Icon name="trash-2" size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   {fixedExpenseGroupsView.length === 0 && (
                     <p className="text-xs text-zinc-500 text-center py-6">Nenhuma conta fixa cadastrada ainda.</p>
                   )}
@@ -2567,6 +2714,88 @@
                     className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
                   >
                     {editingFixedExpenseId ? "Salvar Alterações" : "Criar Conta"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: AJUSTAR LIMITE DO CARTÃO */}
+          {isCreditCardLimitEditOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">Ajustar Limite do Cartão</h3>
+                  <button onClick={() => setIsCreditCardLimitEditOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleSaveCreditCardLimit} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Limite do Cartão (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      autoFocus
+                      value={creditCardLimitEditValue}
+                      onChange={e => setCreditCardLimitEditValue(e.target.value)}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
+                  >
+                    Salvar Limite
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL: NOVA OU EDITAR PREVISÃO DO CARTÃO */}
+          {isCreditCardItemFormOpen && (
+            <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-2xl p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-bold text-base text-white">
+                    {editingCreditCardItemId ? "Editar Previsão" : "Nova Previsão do Cartão"}
+                  </h3>
+                  <button onClick={() => setIsCreditCardItemFormOpen(false)} className="text-zinc-400 hover:text-white">
+                    <Icon name="x" size={20} />
+                  </button>
+                </div>
+                <form onSubmit={handleSaveCreditCardItem} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Descrição</label>
+                    <input
+                      type="text"
+                      required
+                      autoFocus
+                      placeholder="Ex: Parcela do celular"
+                      value={creditCardItemForm.name}
+                      onChange={e => setCreditCardItemForm({ ...creditCardItemForm, name: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-zinc-400 block mb-1">Valor (R$)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      placeholder="Ex: 150.00"
+                      value={creditCardItemForm.value}
+                      onChange={e => setCreditCardItemForm({ ...creditCardItemForm, value: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-400"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-black font-bold py-2.5 rounded-xl active:scale-95 transition mt-2"
+                  >
+                    {editingCreditCardItemId ? "Salvar Alterações" : "Adicionar Previsão"}
                   </button>
                 </form>
               </div>
