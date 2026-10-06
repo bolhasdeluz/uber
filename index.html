@@ -956,7 +956,7 @@
         if (editingFixedExpenseId) {
           setFixedExpenses(prev => prev.map(e => (e.id === editingFixedExpenseId ? { ...e, name: fixedExpenseForm.name, value, groupId } : e)));
         } else {
-          setFixedExpenses(prev => [...prev, { id: Date.now(), name: fixedExpenseForm.name, value, groupId }]);
+          setFixedExpenses(prev => [...prev, { id: Date.now(), name: fixedExpenseForm.name, value, groupId, paid: false }]);
         }
 
         setFixedExpenseForm({ name: "", value: "", groupId: "" });
@@ -979,6 +979,10 @@
         setFixedExpenses(prev => prev.filter(e => e.id !== id));
       };
 
+      const handleToggleFixedExpensePaid = (id) => {
+        setFixedExpenses(prev => prev.map(e => (e.id === id ? { ...e, paid: !e.paid } : e)));
+      };
+
       // Cartão de Crédito (limite muda todo mês, previsões são cadastradas manualmente)
       const handleSaveCreditCardLimit = (e) => {
         e.preventDefault();
@@ -996,7 +1000,7 @@
         if (editingCreditCardItemId) {
           setCreditCardItems(prev => prev.map(item => (item.id === editingCreditCardItemId ? { ...item, name: creditCardItemForm.name, value } : item)));
         } else {
-          setCreditCardItems(prev => [...prev, { id: Date.now(), name: creditCardItemForm.name, value }]);
+          setCreditCardItems(prev => [...prev, { id: Date.now(), name: creditCardItemForm.name, value, paid: false }]);
         }
 
         setCreditCardItemForm({ name: "", value: "" });
@@ -1013,6 +1017,10 @@
       const handleDeleteCreditCardItem = (id) => {
         if (!confirm("Excluir esta previsão do cartão?")) return;
         setCreditCardItems(prev => prev.filter(item => item.id !== id));
+      };
+
+      const handleToggleCreditCardItemPaid = (id) => {
+        setCreditCardItems(prev => prev.map(item => (item.id === id ? { ...item, paid: !item.paid } : item)));
       };
 
       // Ajuste manual do saldo da carteira
@@ -2434,15 +2442,22 @@
                       {creditCardItems.map(item => (
                         <div
                           key={item.id}
-                          className="bg-zinc-900 border border-zinc-800/80 p-2 rounded-xl flex justify-between items-center"
+                          className={`bg-zinc-900 border border-zinc-800/80 p-2 rounded-xl flex justify-between items-center transition ${item.paid ? "opacity-50" : ""}`}
                         >
                           <div>
-                            <span className="text-xs font-bold text-white block">{item.name}</span>
+                            <span className={`text-xs font-bold text-white block ${item.paid ? "line-through" : ""}`}>{item.name}</span>
                             <span className="text-[11px] text-zinc-400">
                               R$ {item.value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </div>
                           <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleToggleCreditCardItemPaid(item.id)}
+                              className={`p-1.5 transition ${item.paid ? "text-emerald-400" : "text-zinc-400 hover:text-emerald-400"}`}
+                              title={item.paid ? "Marcar como não paga" : "Marcar como paga"}
+                            >
+                              <Icon name="check-circle" size={13} className={item.paid ? "fill-current" : ""} />
+                            </button>
                             <button
                               onClick={() => handleOpenEditCreditCardItem(item)}
                               className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
@@ -2490,15 +2505,22 @@
                             {section.items.map(item => (
                               <div
                                 key={item.id}
-                                className="bg-zinc-950 border border-zinc-800 p-3 rounded-2xl flex justify-between items-center"
+                                className={`bg-zinc-950 border border-zinc-800 p-3 rounded-2xl flex justify-between items-center transition ${item.paid ? "opacity-50" : ""}`}
                               >
                                 <div>
-                                  <span className="text-xs font-bold text-white block">{item.name}</span>
+                                  <span className={`text-xs font-bold text-white block ${item.paid ? "line-through" : ""}`}>{item.name}</span>
                                   <span className="text-[11px] text-zinc-400">
                                     R$ {item.value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleToggleFixedExpensePaid(item.id)}
+                                    className={`p-1.5 transition ${item.paid ? "text-emerald-400" : "text-zinc-400 hover:text-emerald-400"}`}
+                                    title={item.paid ? "Marcar como não paga" : "Marcar como paga"}
+                                  >
+                                    <Icon name="check-circle" size={14} className={item.paid ? "fill-current" : ""} />
+                                  </button>
                                   <button
                                     onClick={() => handleOpenEditFixedExpense(item)}
                                     className="p-1.5 text-zinc-400 hover:text-sky-400 transition"
