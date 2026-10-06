@@ -54,6 +54,17 @@
       return d.toISOString().split("T")[0];
     };
 
+    const getCurrentMonthKey = () => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    };
+
+    const shiftMonthKey = (key, delta) => {
+      const [year, month] = key.split("-").map(Number);
+      const d = new Date(year, month - 1 + delta, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    };
+
     const emptyShiftForm = (dateStr) => ({
       date: dateStr,
       income: "",
@@ -75,6 +86,11 @@
       "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
     ];
     const WEEKDAY_SHORT_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+    const formatMonthKeyLabel = (key) => {
+      const [year, month] = key.split("-").map(Number);
+      return `${MONTH_FULL_NAMES[month - 1]} de ${year}`;
+    };
 
     const Icon = ({ name, size = 20, className = "" }) => {
       useEffect(() => {
@@ -202,9 +218,14 @@
         return saved ? parseFloat(saved) : 800;
       });
 
-      const [monthlyIncome, setMonthlyIncome] = useState(() => {
+      // Renda mensal por mês (ex: {"2026-10": 7000}). Backups antigos salvavam só um
+      // número único; se for esse o caso, esse valor vira a renda do mês atual.
+      const [incomeByMonth, setIncomeByMonth] = useState(() => {
         const saved = localStorage.getItem("rota_income_master");
-        return saved ? parseFloat(saved) : 7000;
+        if (!saved) return {};
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        return { [getCurrentMonthKey()]: parsed };
       });
 
       const [fixedExpenseGroups, setFixedExpenseGroups] = useState(() => {
@@ -217,15 +238,37 @@
         return saved ? JSON.parse(saved) : [];
       });
 
-      const [creditCardLimit, setCreditCardLimit] = useState(() => {
-        const saved = localStorage.getItem("rota_cc_limit_master");
-        return saved ? parseFloat(saved) : 0;
+      // Quais contas fixas já foram marcadas como pagas em cada mês (ex: {"2026-10": [id1, id2]})
+      const [fixedExpensePaidByMonth, setFixedExpensePaidByMonth] = useState(() => {
+        const saved = localStorage.getItem("rota_income_expenses_paid_master");
+        if (saved) return JSON.parse(saved);
+        const savedExpenses = localStorage.getItem("rota_income_expenses_master");
+        if (savedExpenses) {
+          const paidIds = JSON.parse(savedExpenses).filter(e => e.paid).map(e => e.id);
+          if (paidIds.length > 0) return { [getCurrentMonthKey()]: paidIds };
+        }
+        return {};
       });
 
-      const [creditCardItems, setCreditCardItems] = useState(() => {
-        const saved = localStorage.getItem("rota_cc_items_master");
-        return saved ? JSON.parse(saved) : [];
+      // Limite do cartão por mês (muda todo mês, não se repete sozinho)
+      const [creditCardLimitByMonth, setCreditCardLimitByMonth] = useState(() => {
+        const saved = localStorage.getItem("rota_cc_limit_master");
+        if (!saved) return {};
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        return { [getCurrentMonthKey()]: parsed };
       });
+
+      // Previsões do cartão por mês (lançadas na mão todo mês, sem repetir sozinhas)
+      const [creditCardItemsByMonth, setCreditCardItemsByMonth] = useState(() => {
+        const saved = localStorage.getItem("rota_cc_items_master");
+        if (!saved) return {};
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return { [getCurrentMonthKey()]: parsed };
+        return parsed;
+      });
+
+      const [rendaMonthKey, setRendaMonthKey] = useState(() => getCurrentMonthKey());
 
       const [weekOffset, setWeekOffset] = useState(0);
       const [selectedDayIndex, setSelectedDayIndex] = useState(null);
@@ -292,13 +335,14 @@
         localStorage.setItem("rota_debts_master", JSON.stringify(debts));
         localStorage.setItem("rota_groups_master", JSON.stringify(groups));
         localStorage.setItem("rota_goal", weeklyGoal.toString());
-        localStorage.setItem("rota_income_master", monthlyIncome.toString());
+        localStorage.setItem("rota_income_master", JSON.stringify(incomeByMonth));
         localStorage.setItem("rota_income_groups_master", JSON.stringify(fixedExpenseGroups));
         localStorage.setItem("rota_income_expenses_master", JSON.stringify(fixedExpenses));
-        localStorage.setItem("rota_cc_limit_master", creditCardLimit.toString());
-        localStorage.setItem("rota_cc_items_master", JSON.stringify(creditCardItems));
+        localStorage.setItem("rota_income_expenses_paid_master", JSON.stringify(fixedExpensePaidByMonth));
+        localStorage.setItem("rota_cc_limit_master", JSON.stringify(creditCardLimitByMonth));
+        localStorage.setItem("rota_cc_items_master", JSON.stringify(creditCardItemsByMonth));
         if (window.lucide) window.lucide.createIcons();
-      }, [wallet, shifts, expenses, debts, groups, weeklyGoal, monthlyIncome, fixedExpenseGroups, fixedExpenses, creditCardLimit, creditCardItems]);
+      }, [wallet, shifts, expenses, debts, groups, weeklyGoal, incomeByMonth, fixedExpenseGroups, fixedExpenses, fixedExpensePaidByMonth, creditCardLimitByMonth, creditCardItemsByMonth]);
 
       // Correção pontual: restaura/atualiza a lista completa de metas (Casa, Terreiro, Dívidas)
       // com os valores corretos, sem apagar o que já foi pago nem duplicar metas existentes.
@@ -510,13 +554,31 @@
         () => fixedExpenses.reduce((acc, e) => acc + e.value, 0),
         [fixedExpenses]
       );
-      const incomeBalance = monthlyIncome - totalFixedExpenses;
 
+      const todayMonthKey = getCurrentMonthKey();
+
+      // Renda do mês em exibição: usa o valor daquele mês, ou repete o último valor
+      // conhecido de um mês anterior (a renda tende a não mudar de mês a mês)
+      const rendaMonthIncome = useMemo(() => {
+        if (incomeByMonth[rendaMonthKey] != null) return incomeByMonth[rendaMonthKey];
+        const priorKeys = Object.keys(incomeByMonth).filter(k => k < rendaMonthKey).sort();
+        if (priorKeys.length > 0) return incomeByMonth[priorKeys[priorKeys.length - 1]];
+        return 7000;
+      }, [incomeByMonth, rendaMonthKey]);
+
+      const incomeBalance = rendaMonthIncome - totalFixedExpenses;
+
+      const fixedExpensePaidIdsForMonth = fixedExpensePaidByMonth[rendaMonthKey] || [];
+
+      // Cartão de crédito do mês em exibição: limite e previsões não se repetem
+      // sozinhos de um mês pro outro (são lançados na mão a cada mês)
+      const creditCardLimitForMonth = creditCardLimitByMonth[rendaMonthKey] || 0;
+      const creditCardItemsForMonth = creditCardItemsByMonth[rendaMonthKey] || [];
       const creditCardUsed = useMemo(
-        () => creditCardItems.reduce((acc, item) => acc + item.value, 0),
-        [creditCardItems]
+        () => creditCardItemsForMonth.reduce((acc, item) => acc + item.value, 0),
+        [creditCardItemsForMonth]
       );
-      const creditCardAvailable = creditCardLimit - creditCardUsed;
+      const creditCardAvailable = creditCardLimitForMonth - creditCardUsed;
 
       const fixedExpenseGroupsView = useMemo(() => {
         const knownGroupIds = new Set(fixedExpenseGroups.map(g => g.id));
@@ -890,13 +952,17 @@
         });
       };
 
-      // Ajuste manual da renda mensal
+      // Ajuste manual da renda mensal (vale só para o mês em exibição no modal)
       const handleSaveIncomeEdit = (e) => {
         e.preventDefault();
         const value = parseFloat(incomeEditValue);
         if (isNaN(value) || value < 0) return;
-        setMonthlyIncome(value);
+        setIncomeByMonth(prev => ({ ...prev, [rendaMonthKey]: value }));
         setIsIncomeEditModalOpen(false);
+      };
+
+      const changeRendaMonth = (delta) => {
+        setRendaMonthKey(prev => shiftMonthKey(prev, delta));
       };
 
       // Categorias das contas fixas (Renda)
@@ -956,7 +1022,7 @@
         if (editingFixedExpenseId) {
           setFixedExpenses(prev => prev.map(e => (e.id === editingFixedExpenseId ? { ...e, name: fixedExpenseForm.name, value, groupId } : e)));
         } else {
-          setFixedExpenses(prev => [...prev, { id: Date.now(), name: fixedExpenseForm.name, value, groupId, paid: false }]);
+          setFixedExpenses(prev => [...prev, { id: Date.now(), name: fixedExpenseForm.name, value, groupId }]);
         }
 
         setFixedExpenseForm({ name: "", value: "", groupId: "" });
@@ -980,15 +1046,20 @@
       };
 
       const handleToggleFixedExpensePaid = (id) => {
-        setFixedExpenses(prev => prev.map(e => (e.id === id ? { ...e, paid: !e.paid } : e)));
+        setFixedExpensePaidByMonth(prev => {
+          const current = prev[rendaMonthKey] || [];
+          const updated = current.includes(id) ? current.filter(x => x !== id) : [...current, id];
+          return { ...prev, [rendaMonthKey]: updated };
+        });
       };
 
-      // Cartão de Crédito (limite muda todo mês, previsões são cadastradas manualmente)
+      // Cartão de Crédito (limite muda todo mês, previsões são cadastradas manualmente,
+      // tudo valendo só para o mês em exibição no modal)
       const handleSaveCreditCardLimit = (e) => {
         e.preventDefault();
         const value = parseFloat(creditCardLimitEditValue);
         if (isNaN(value) || value < 0) return;
-        setCreditCardLimit(value);
+        setCreditCardLimitByMonth(prev => ({ ...prev, [rendaMonthKey]: value }));
         setIsCreditCardLimitEditOpen(false);
       };
 
@@ -997,11 +1068,13 @@
         const value = parseFloat(creditCardItemForm.value) || 0;
         if (!creditCardItemForm.name || value <= 0) return;
 
-        if (editingCreditCardItemId) {
-          setCreditCardItems(prev => prev.map(item => (item.id === editingCreditCardItemId ? { ...item, name: creditCardItemForm.name, value } : item)));
-        } else {
-          setCreditCardItems(prev => [...prev, { id: Date.now(), name: creditCardItemForm.name, value, paid: false }]);
-        }
+        setCreditCardItemsByMonth(prev => {
+          const monthItems = prev[rendaMonthKey] || [];
+          const updated = editingCreditCardItemId
+            ? monthItems.map(item => (item.id === editingCreditCardItemId ? { ...item, name: creditCardItemForm.name, value } : item))
+            : [...monthItems, { id: Date.now(), name: creditCardItemForm.name, value, paid: false }];
+          return { ...prev, [rendaMonthKey]: updated };
+        });
 
         setCreditCardItemForm({ name: "", value: "" });
         setEditingCreditCardItemId(null);
@@ -1016,11 +1089,17 @@
 
       const handleDeleteCreditCardItem = (id) => {
         if (!confirm("Excluir esta previsão do cartão?")) return;
-        setCreditCardItems(prev => prev.filter(item => item.id !== id));
+        setCreditCardItemsByMonth(prev => ({
+          ...prev,
+          [rendaMonthKey]: (prev[rendaMonthKey] || []).filter(item => item.id !== id)
+        }));
       };
 
       const handleToggleCreditCardItemPaid = (id) => {
-        setCreditCardItems(prev => prev.map(item => (item.id === id ? { ...item, paid: !item.paid } : item)));
+        setCreditCardItemsByMonth(prev => ({
+          ...prev,
+          [rendaMonthKey]: (prev[rendaMonthKey] || []).map(item => (item.id === id ? { ...item, paid: !item.paid } : item))
+        }));
       };
 
       // Ajuste manual do saldo da carteira
@@ -1035,11 +1114,11 @@
       // Backup: baixa um arquivo .json com todos os dados do app
       const handleExportBackup = () => {
         const backup = {
-          version: 1,
+          version: 2,
           exportedAt: new Date().toISOString(),
           wallet, shifts, expenses, debts, groups, weeklyGoal,
-          monthlyIncome, fixedExpenseGroups, fixedExpenses,
-          creditCardLimit, creditCardItems
+          incomeByMonth, fixedExpenseGroups, fixedExpenses, fixedExpensePaidByMonth,
+          creditCardLimitByMonth, creditCardItemsByMonth
         };
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -1069,11 +1148,15 @@
             if (Array.isArray(data.debts)) setDebts(data.debts);
             if (Array.isArray(data.groups)) setGroups(data.groups);
             if (typeof data.weeklyGoal === "number") setWeeklyGoal(data.weeklyGoal);
-            if (typeof data.monthlyIncome === "number") setMonthlyIncome(data.monthlyIncome);
+            if (data.incomeByMonth && typeof data.incomeByMonth === "object") setIncomeByMonth(data.incomeByMonth);
+            else if (typeof data.monthlyIncome === "number") setIncomeByMonth({ [getCurrentMonthKey()]: data.monthlyIncome });
             if (Array.isArray(data.fixedExpenseGroups)) setFixedExpenseGroups(data.fixedExpenseGroups);
             if (Array.isArray(data.fixedExpenses)) setFixedExpenses(data.fixedExpenses);
-            if (typeof data.creditCardLimit === "number") setCreditCardLimit(data.creditCardLimit);
-            if (Array.isArray(data.creditCardItems)) setCreditCardItems(data.creditCardItems);
+            if (data.fixedExpensePaidByMonth && typeof data.fixedExpensePaidByMonth === "object") setFixedExpensePaidByMonth(data.fixedExpensePaidByMonth);
+            if (data.creditCardLimitByMonth && typeof data.creditCardLimitByMonth === "object") setCreditCardLimitByMonth(data.creditCardLimitByMonth);
+            else if (typeof data.creditCardLimit === "number") setCreditCardLimitByMonth({ [getCurrentMonthKey()]: data.creditCardLimit });
+            if (data.creditCardItemsByMonth && typeof data.creditCardItemsByMonth === "object") setCreditCardItemsByMonth(data.creditCardItemsByMonth);
+            else if (Array.isArray(data.creditCardItems)) setCreditCardItemsByMonth({ [getCurrentMonthKey()]: data.creditCardItems });
             alert("Backup restaurado com sucesso!");
             setIsBackupModalOpen(false);
           } catch (err) {
@@ -1150,7 +1233,7 @@
           {/* BOTÃO RENDA: bem no topo, acima de tudo */}
           <div className="flex justify-end -mb-2">
             <button
-              onClick={() => setIsIncomeModalOpen(true)}
+              onClick={() => { setRendaMonthKey(getCurrentMonthKey()); setIsIncomeModalOpen(true); }}
               className="text-[11px] bg-zinc-900 hover:bg-zinc-800 text-emerald-400 border border-zinc-800 px-2.5 py-1 rounded-full flex items-center gap-1 transition active:scale-95"
             >
               <Icon name="wallet" size={11} /> Renda
@@ -2331,13 +2414,41 @@
                   </button>
                 </div>
 
+                <div className="flex items-center justify-between gap-2 mb-3 bg-zinc-950 border border-zinc-800 rounded-xl px-1 py-1">
+                  <button
+                    onClick={() => changeRendaMonth(-1)}
+                    className="p-1.5 text-zinc-400 hover:text-white transition"
+                    title="Mês anterior"
+                  >
+                    <Icon name="chevron-left" size={16} />
+                  </button>
+                  <div className="flex flex-col items-center leading-tight">
+                    <span className="text-xs font-bold text-white">{formatMonthKeyLabel(rendaMonthKey)}</span>
+                    {rendaMonthKey !== todayMonthKey && (
+                      <button
+                        onClick={() => setRendaMonthKey(todayMonthKey)}
+                        className="text-[10px] text-sky-400 hover:text-sky-300 transition"
+                      >
+                        Voltar para o mês atual
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => changeRendaMonth(1)}
+                    className="p-1.5 text-zinc-400 hover:text-white transition"
+                    title="Próximo mês"
+                  >
+                    <Icon name="chevron-right" size={16} />
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2 mb-3">
                   <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">Renda</span>
                       <button
                         onClick={() => {
-                          setIncomeEditValue(monthlyIncome.toFixed(2));
+                          setIncomeEditValue(rendaMonthIncome.toFixed(2));
                           setIsIncomeEditModalOpen(true);
                         }}
                         className="text-zinc-500 hover:text-sky-400 transition"
@@ -2347,7 +2458,7 @@
                       </button>
                     </div>
                     <div className="text-lg font-extrabold text-white">
-                      R$ {monthlyIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      R$ {rendaMonthIncome.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
                   <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3">
@@ -2410,7 +2521,7 @@
                           <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-semibold">Limite</span>
                           <button
                             onClick={() => {
-                              setCreditCardLimitEditValue(creditCardLimit.toFixed(2));
+                              setCreditCardLimitEditValue(creditCardLimitForMonth.toFixed(2));
                               setIsCreditCardLimitEditOpen(true);
                             }}
                             className="text-zinc-500 hover:text-sky-400 transition"
@@ -2420,7 +2531,7 @@
                           </button>
                         </div>
                         <div className="text-sm font-extrabold text-white">
-                          R$ {creditCardLimit.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          R$ {creditCardLimitForMonth.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
                       <div>
@@ -2436,10 +2547,10 @@
                     </p>
 
                     <div className="space-y-1.5">
-                      {creditCardItems.length === 0 && (
+                      {creditCardItemsForMonth.length === 0 && (
                         <p className="text-[11px] text-zinc-500 text-center py-2">Nenhuma previsão cadastrada ainda.</p>
                       )}
-                      {creditCardItems.map(item => (
+                      {creditCardItemsForMonth.map(item => (
                         <div
                           key={item.id}
                           className={`bg-zinc-900 border border-zinc-800/80 p-2 rounded-xl flex justify-between items-center transition ${item.paid ? "opacity-50" : ""}`}
@@ -2502,13 +2613,15 @@
 
                         {!isCollapsed && (
                           <div className="space-y-2 pl-1">
-                            {section.items.map(item => (
+                            {section.items.map(item => {
+                              const isPaid = fixedExpensePaidIdsForMonth.includes(item.id);
+                              return (
                               <div
                                 key={item.id}
-                                className={`bg-zinc-950 border border-zinc-800 p-3 rounded-2xl flex justify-between items-center transition ${item.paid ? "opacity-50" : ""}`}
+                                className={`bg-zinc-950 border border-zinc-800 p-3 rounded-2xl flex justify-between items-center transition ${isPaid ? "opacity-50" : ""}`}
                               >
                                 <div>
-                                  <span className={`text-xs font-bold text-white block ${item.paid ? "line-through" : ""}`}>{item.name}</span>
+                                  <span className={`text-xs font-bold text-white block ${isPaid ? "line-through" : ""}`}>{item.name}</span>
                                   <span className="text-[11px] text-zinc-400">
                                     R$ {item.value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </span>
@@ -2516,10 +2629,10 @@
                                 <div className="flex items-center gap-1">
                                   <button
                                     onClick={() => handleToggleFixedExpensePaid(item.id)}
-                                    className={`p-1.5 transition ${item.paid ? "text-emerald-400" : "text-zinc-400 hover:text-emerald-400"}`}
-                                    title={item.paid ? "Marcar como não paga" : "Marcar como paga"}
+                                    className={`p-1.5 transition ${isPaid ? "text-emerald-400" : "text-zinc-400 hover:text-emerald-400"}`}
+                                    title={isPaid ? "Marcar como não paga" : "Marcar como paga"}
                                   >
-                                    <Icon name="check-circle" size={14} className={item.paid ? "fill-current" : ""} />
+                                    <Icon name="check-circle" size={14} className={isPaid ? "fill-current" : ""} />
                                   </button>
                                   <button
                                     onClick={() => handleOpenEditFixedExpense(item)}
@@ -2537,7 +2650,8 @@
                                   </button>
                                 </div>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
